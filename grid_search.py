@@ -124,6 +124,8 @@ def physical_cores():
 
 
 SEED = 42
+CONVERTIBLE = False
+
 
 # Env PRIMA di import torch
 CORES = physical_cores()
@@ -172,7 +174,6 @@ np.random.seed(SEED)
 random.seed(SEED)
 
 
-
 # Device selection: prefer CUDA when available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if device.type == 'cuda':
@@ -211,11 +212,16 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Configure plot display settings
-sns.set(font_scale=1.4)
-sns.set_style('white')
-plt.rc('font', size=14)
-get_ipython().run_line_magic('matplotlib', 'inline')
+
+
+
+if not CONVERTIBLE:
+
+    # Configure plot display settings
+    sns.set(font_scale=1.4)
+    sns.set_style('white')
+    plt.rc('font', size=14)
+    get_ipython().run_line_magic('matplotlib', 'inline')
 
 
 # In[3]:
@@ -1333,27 +1339,29 @@ def plot_top_configurations_rnn(results, k_splits, top_n=5, figsize=(14, 7)):
 
         labels.append(f"{readable_label}\n(μ={mean_score:.3f})")
 
-    # Create plot
-    fig, ax = plt.subplots(figsize=figsize)
-    bp = ax.boxplot(boxplot_data, labels=labels, patch_artist=True,
-                    showmeans=True, meanline=True)
 
-    # Styling
-    for patch in bp['boxes']:
-        patch.set_facecolor('lightblue')
-        patch.set_alpha(0.7)
+    if (not CONVERTIBLE):
+        # Create plot
+        fig, ax = plt.subplots(figsize=figsize)
+        bp = ax.boxplot(boxplot_data, labels=labels, patch_artist=True,
+                        showmeans=True, meanline=True)
 
-    # Highlight best configuration
-    ax.get_xticklabels()[0].set_fontweight('bold')
+        # Styling
+        for patch in bp['boxes']:
+            patch.set_facecolor('lightblue')
+            patch.set_alpha(0.7)
 
-    ax.set_ylabel('F1 Score')
-    ax.set_xlabel('Configuration')
-    ax.set_title(f'Top {len(top_configs)} RNN Configurations - F1 Score Distribution Across {k_splits} Splits')
-    ax.grid(alpha=0.3, axis='y')
+        # Highlight best configuration
+        ax.get_xticklabels()[0].set_fontweight('bold')
 
-    plt.xticks(rotation=0, ha='center')
-    plt.tight_layout()
-    plt.show()
+        ax.set_ylabel('F1 Score')
+        ax.set_xlabel('Configuration')
+        ax.set_title(f'Top {len(top_configs)} RNN Configurations - F1 Score Distribution Across {k_splits} Splits')
+        ax.grid(alpha=0.3, axis='y')
+
+        plt.xticks(rotation=0, ha='center')
+        plt.tight_layout()
+        plt.show()
 
 
 # In[21]:
@@ -1366,7 +1374,40 @@ criterion = nn.CrossEntropyLoss()
 # In[22]:
 
 
-get_ipython().run_cell_magic('time', '', "\n# Fixed hyperparameters (not being tuned)\nfixed_params = {\n    'l1_lambda': L1_LAMBDA,\n    'rnn_type': RNN_TYPE,\n    'bidirectional': BIDIRECTIONAL\n}\n\n# Cross-validation settings\ncv_params = {\n    'criterion': criterion,\n    'device': device,\n    'patience': PATIENCE,\n    'verbose': 0,\n    'seed': SEED\n}\n\n# Execute search\nresults, best_config, best_score = grid_search_cv_rnn(\n    df=X_train,\n    param_grid=param_grid,\n    fixed_params=fixed_params,\n    cv_params=cv_params\n)\n")
+from time import perf_counter
+from contextlib import contextmanager
+
+@contextmanager
+def timing(label="Block"):
+    t0 = perf_counter()
+    try:
+        yield
+    finally:
+        print(f"{label} took {perf_counter() - t0:.2f}s")
+
+with timing("Grid search"):
+    fixed_params = {
+        'l1_lambda': L1_LAMBDA,
+        'rnn_type': RNN_TYPE,
+        'bidirectional': BIDIRECTIONAL,
+    }
+    cv_params = {
+        'criterion': criterion,
+        'device': device,
+        'patience': PATIENCE,
+        'verbose': 0,
+        'seed': SEED,
+        'evaluation_metric': 'val_f1',
+        'mode': 'max',
+        'restore_best_weights': True,
+        'writer': None,
+    }
+    results, best_config, best_score = grid_search_cv_rnn(
+        df=X_train,
+        param_grid=param_grid,
+        fixed_params=fixed_params,
+        cv_params=cv_params,
+    )
 
 
 # In[23]:
@@ -1380,10 +1421,340 @@ plot_top_configurations_rnn(results, k_splits=param_grid['k'][0], top_n=5)
 # In[24]:
 
 
-get_ipython().run_cell_magic('time', '', '# filepath: /home/federico/Desktop/ANN/grid_search.ipynb\n\n# ========================================\n# STEP 1: PREPARE FINAL TRAINING\n# ========================================\nprint("="*60)\nprint("TRAINING FINAL MODEL WITH BEST HYPERPARAMETERS")\nprint("="*60)\n\n# Merge best config with fixed params\nfinal_best_params = {**fixed_params, **best_config}\nprint("\\nBest Configuration Found:")\nfor key, value in final_best_params.items():\n    print(f"  {key}: {value}")\nprint(f"\\nBest CV F1 Score: {best_score:.4f}")\n\n# ========================================\n# STEP 2: CREATE FINAL TRAIN/VAL SPLIT\n# (Use minimal validation set, maximize training data)\n# ========================================\nprint("\\n" + "="*60)\nprint("CREATING FINAL TRAIN/VAL SPLIT")\nprint("="*60)\n\n# Use MINIMAL validation set (e.g., 10% of n_val_users from grid search)\n# This maximizes training data while keeping a small val set for early stopping\nunique_samples = X_train[\'sample_index\'].unique()\nrandom.seed(SEED)\nnp.random.seed(SEED)\nnp.random.shuffle(unique_samples)\n\n# Use smaller validation set than CV (e.g., 20-30 samples instead of 45)\nn_val_users_final = max(20, int(final_best_params[\'n_val_users\'] * 0.5))  # Half of CV val size\nn_train_samples = len(unique_samples) - n_val_users_final\n\ntrain_samples = unique_samples[:n_train_samples]\nval_samples = unique_samples[n_train_samples:]\n\ndf_train_final = X_train[X_train[\'sample_index\'].isin(train_samples)].copy()\ndf_val_final = X_train[X_train[\'sample_index\'].isin(val_samples)].copy()\n\nprint(f"Training samples: {len(train_samples)} ({df_train_final.shape[0]} timesteps)")\nprint(f"Validation samples: {len(val_samples)} ({df_val_final.shape[0]} timesteps)")\nprint(f"Training data: {len(train_samples)/(len(train_samples)+len(val_samples))*100:.1f}% of total")\n\n# ========================================\n# STEP 3: PREPROCESS DATA\n# ========================================\n# Map labels (if needed)\nif df_train_final[\'label\'].dtype == \'object\':\n    df_train_final[\'label\'] = df_train_final[\'label\'].map(pain_mapping)\n    df_val_final[\'label\'] = df_val_final[\'label\'].map(pain_mapping)\n\n# Normalize features\npain_survey_columns = [\'pain_survey_1\', \'pain_survey_2\', \'pain_survey_3\', \'pain_survey_4\', \'n_legs\', \'n_hands\', \'n_eyes\']\njoint_columns = [f\'joint_{i:02d}\' for i in range(30)]\nscale_columns = pain_survey_columns + joint_columns\n\ntrain_max = df_train_final[scale_columns].max()\ntrain_min = df_train_final[scale_columns].min()\n\nfor column in scale_columns:\n    df_train_final[column] = (df_train_final[column] - train_min[column]) / (train_max[column] - train_min[column] + 1e-8)\n    df_val_final[column] = (df_val_final[column] - train_min[column]) / (train_max[column] - train_min[column] + 1e-8)\n\n# Build sequences\nprint("\\nBuilding sequences...")\nX_train_final, y_train_final = build_sequences(\n    df_train_final, \n    window=final_best_params[\'window_size\'], \n    stride=final_best_params[\'stride\']\n)\nX_val_final, y_val_final = build_sequences(\n    df_val_final, \n    window=final_best_params[\'window_size\'], \n    stride=final_best_params[\'stride\']\n)\n\nprint(f"Training sequences: {X_train_final.shape}")\nprint(f"Validation sequences: {X_val_final.shape}")\n\n# Create PyTorch datasets\ntrain_ds_final = TensorDataset(\n    torch.from_numpy(X_train_final.astype(np.float32)), \n    torch.from_numpy(y_train_final.astype(np.int64))\n)\nval_ds_final = TensorDataset(\n    torch.from_numpy(X_val_final.astype(np.float32)), \n    torch.from_numpy(y_val_final.astype(np.int64))\n)\n\n# Create data loaders\ntrain_loader_final = make_loader(\n    train_ds_final, \n    batch_size=final_best_params[\'batch_size\'], \n    shuffle=True, \n    drop_last=False\n)\nval_loader_final = make_loader(\n    val_ds_final, \n    batch_size=final_best_params[\'batch_size\'], \n    shuffle=False, \n    drop_last=False\n)\n\n# ========================================\n# STEP 4: INITIALIZE FINAL MODEL\n# ========================================\nprint("\\n" + "="*60)\nprint("INITIALIZING FINAL MODEL")\nprint("="*60)\n\nfinal_model = RecurrentClassifier(\n    input_size=X_train_final.shape[2],\n    hidden_size=final_best_params[\'hidden_size\'],\n    num_layers=final_best_params[\'hidden_layers\'],\n    num_classes=num_classes,\n    dropout_rate=final_best_params[\'dropout_rate\'],\n    bidirectional=final_best_params[\'bidirectional\'],\n    rnn_type=final_best_params[\'rnn_type\']\n).to(device)\n\nrecurrent_summary(final_model, input_size=(final_best_params[\'window_size\'], X_train_final.shape[2]))\n\n# ========================================\n# STEP 5: TRAIN FINAL MODEL\n# ========================================\nprint("\\n" + "="*60)\nprint("TRAINING FINAL MODEL")\nprint("="*60)\n\noptimizer_final = torch.optim.AdamW(\n    final_model.parameters(), \n    lr=final_best_params[\'learning_rate\'], \n    weight_decay=final_best_params[\'l2_lambda\']\n)\nscaler_final = torch.amp.GradScaler(enabled=(device.type == \'cuda\'))\n\n# Create directory for final model\nos.makedirs("models/final_model", exist_ok=True)\n\n# Train with MORE epochs than CV (since we have more data)\nfinal_epochs = int(final_best_params[\'epochs\'] * 1.5)  # 1.5x more epochs\nfinal_patience = PATIENCE * 2\nprint(f"Training for {final_epochs} epochs (1.5x CV epochs due to more training data)")\n\nfinal_model, training_history = fit(\n    model=final_model,\n    train_loader=train_loader_final,\n    val_loader=val_loader_final,\n    epochs=final_epochs,\n    criterion=criterion,\n    optimizer=optimizer_final,\n    scaler=scaler_final,\n    device=device,\n    l1_lambda=final_best_params[\'l1_lambda\'],\n    l2_lambda=0,  # Already in optimizer weight_decay\n    patience=final_patience,\n    evaluation_metric="val_f1",\n    mode=\'max\',\n    restore_best_weights=True,\n    writer=None,\n    verbose=VERBOSE,\n    experiment_name="final_model/best"\n)\n\nprint(f"\\n✓ Final model trained!")\nprint(f"Best Validation F1: {max(training_history[\'val_f1\']):.4f}")\nprint(f"CV F1 Score: {best_score:.4f}")\nprint(f"Improvement: {max(training_history[\'val_f1\']) - best_score:+.4f}")\n\n# ========================================\n# STEP 6: LOAD TEST DATA\n# ========================================\nprint("\\n" + "="*60)\nprint("PREPARING TEST DATA")\nprint("="*60)\n\nX_test = pd.read_csv(\'pirate_pain_test.csv\')\n\n# Drop joint_30\nif \'joint_30\' in X_test.columns:\n    X_test.drop(\'joint_30\', axis=1, inplace=True)\n\n# Convert categorical to binary\nbinary_cols = [\'n_hands\', \'n_eyes\', \'n_legs\']\nfor col in binary_cols:\n    X_test[col] = X_test[col].map(lambda x: 1 if str(x).lower().strip() == \'two\' else 0)\n\ndf_test_original = X_test.copy()\ndf_test_processed = X_test.copy()\n\n# Normalize test data using TRAINING statistics (from final training set)\nfor column in scale_columns:\n    df_test_processed[column] = (df_test_processed[column] - train_min[column]) / (train_max[column] - train_min[column] + 1e-8)\n\n# Build test sequences\ndf_test_processed[\'label\'] = 0  # Dummy label\nX_test_sequences, _ = build_sequences(\n    df_test_processed,\n    window=final_best_params[\'window_size\'],\n    stride=final_best_params[\'stride\']\n)\n\nprint(f"Test sequences: {X_test_sequences.shape}")\n\n# ========================================\n# STEP 7: MAKE PREDICTIONS\n# ========================================\nprint("\\n" + "="*60)\nprint("MAKING PREDICTIONS")\nprint("="*60)\n\n# Load the best model weights\nfinal_model.load_state_dict(torch.load("models/final_model/best_model.pt", map_location=device))\nfinal_model.eval()\n\n# Create test loader\ntest_ds = TensorDataset(torch.from_numpy(X_test_sequences.astype(np.float32)))\ntest_loader = DataLoader(\n    test_ds,\n    batch_size=final_best_params[\'batch_size\'],\n    shuffle=False,\n    num_workers=0 if LOCAL else 2\n)\n\n# Get predictions\nall_predictions = []\nwith torch.no_grad():\n    for (xb,) in test_loader:\n        xb = xb.to(device)\n        logits = final_model(xb)\n        preds = logits.argmax(dim=1).cpu().numpy()\n        all_predictions.append(preds)\n\nall_predictions = np.concatenate(all_predictions)\nprint(f"Total window predictions: {len(all_predictions)}")\n\n# ========================================\n# STEP 8: MAP PREDICTIONS TO SAMPLES\n# ========================================\nsample_predictions = []\npred_idx = 0\n\nunique_samples = df_test_processed[\'sample_index\'].unique()\nwindow = final_best_params[\'window_size\']\nstride = final_best_params[\'stride\']\n\nprint(f"\\nMapping {len(all_predictions)} windows to {len(unique_samples)} samples...")\n\nfor sample_id in unique_samples:\n    sample_data = df_test_processed[df_test_processed[\'sample_index\'] == sample_id]\n    n_timestamps = len(sample_data)\n\n    # Padding logic (same as build_sequences)\n    padding_len = window - n_timestamps % window if n_timestamps % window != 0 else 0\n    total_len = n_timestamps + padding_len\n\n    # Count windows\n    n_windows = 0\n    idx = 0\n    while idx + window <= total_len:\n        n_windows += 1\n        idx += stride\n\n    # Safety check\n    if pred_idx + n_windows > len(all_predictions):\n        n_windows = max(0, len(all_predictions) - pred_idx)\n\n    # Majority voting\n    if n_windows > 0:\n        end_idx = int(pred_idx + n_windows)\n        sample_window_predictions = all_predictions[int(pred_idx):end_idx]\n\n        if len(sample_window_predictions) > 0:\n            final_prediction = np.bincount(sample_window_predictions).argmax()\n        else:\n            final_prediction = 0\n    else:\n        final_prediction = 0\n\n    sample_predictions.append({\n        \'sample_index\': sample_id,\n        \'predicted_label_id\': final_prediction,\n        \'predicted_label\': label_reverse_mapping[final_prediction]\n    })\n\n    pred_idx += n_windows\n\nprint(f"Used {pred_idx}/{len(all_predictions)} window predictions")\n\n# ========================================\n# STEP 9: SAVE RESULTS\n# ========================================\npredictions_df = pd.DataFrame(sample_predictions)\n\noutput_df = df_test_original[[\'sample_index\']].drop_duplicates().merge(\n    predictions_df,\n    on=\'sample_index\',\n    how=\'left\'\n)\n\n# Handle missing predictions\nif output_df[\'predicted_label\'].isna().any():\n    print(f"WARNING: {output_df[\'predicted_label\'].isna().sum()} samples missing predictions")\n    output_df[\'predicted_label\'].fillna(\'no_pain\', inplace=True)\n\n# Save CSV\noutput_filename = \'pirate_pain_test_predictions.csv\'\noutput_df[[\'sample_index\', \'predicted_label\']].to_csv(output_filename, index=False)\n\nprint("\\n" + "="*60)\nprint("PREDICTIONS SAVED")\nprint("="*60)\nprint(f"Output file: {output_filename}")\nprint(f"Total samples: {len(output_df)}")\nprint(f"\\n📊 Performance Comparison:")\nprint(f"  CV Mean F1: {best_score:.4f}")\nprint(f"  Final Model Val F1: {max(training_history[\'val_f1\']):.4f}")\nprint(f"  Improvement: {max(training_history[\'val_f1\']) - best_score:+.4f} ({((max(training_history[\'val_f1\'])/best_score - 1)*100):+.1f}%)")\n\nprint("\\n📈 Prediction Distribution:")\nprint(output_df[\'predicted_label\'].value_counts())\nprint("\\nPercentages:")\nfor pain_level in [\'no_pain\', \'low_pain\', \'high_pain\']:\n    count = (output_df[\'predicted_label\'] == pain_level).sum()\n    percentage = (count / len(output_df)) * 100\n    print(f"  {pain_level}: {count} ({percentage:.1f}%)")\n\nprint("\\n🔍 First 10 predictions:")\nprint(output_df.head(10))\n')
+# filepath: /home/federico/Desktop/ANN/grid_search.ipynb
+
+# ========================================
+# STEP 1: PREPARE FINAL TRAINING
+# ========================================
+print("="*60)
+print("TRAINING FINAL MODEL WITH BEST HYPERPARAMETERS")
+print("="*60)
+
+# Merge best config with fixed params
+final_best_params = {**fixed_params, **best_config}
+print("\nBest Configuration Found:")
+for key, value in final_best_params.items():
+    print(f"  {key}: {value}")
+print(f"\nBest CV F1 Score: {best_score:.4f}")
+
+# ========================================
+# STEP 2: CREATE FINAL TRAIN/VAL SPLIT
+# (Use minimal validation set, maximize training data)
+# ========================================
+print("\n" + "="*60)
+print("CREATING FINAL TRAIN/VAL SPLIT")
+print("="*60)
+
+# Use MINIMAL validation set (e.g., 10% of n_val_users from grid search)
+# This maximizes training data while keeping a small val set for early stopping
+unique_samples = X_train['sample_index'].unique()
+random.seed(SEED)
+np.random.seed(SEED)
+np.random.shuffle(unique_samples)
+
+# Use smaller validation set than CV (e.g., 20-30 samples instead of 45)
+n_val_users_final = max(20, int(final_best_params['n_val_users'] * 0.5))  # Half of CV val size
+n_train_samples = len(unique_samples) - n_val_users_final
+
+train_samples = unique_samples[:n_train_samples]
+val_samples = unique_samples[n_train_samples:]
+
+df_train_final = X_train[X_train['sample_index'].isin(train_samples)].copy()
+df_val_final = X_train[X_train['sample_index'].isin(val_samples)].copy()
+
+print(f"Training samples: {len(train_samples)} ({df_train_final.shape[0]} timesteps)")
+print(f"Validation samples: {len(val_samples)} ({df_val_final.shape[0]} timesteps)")
+print(f"Training data: {len(train_samples)/(len(train_samples)+len(val_samples))*100:.1f}% of total")
+
+# ========================================
+# STEP 3: PREPROCESS DATA
+# ========================================
+# Map labels (if needed)
+if df_train_final['label'].dtype == 'object':
+    df_train_final['label'] = df_train_final['label'].map(pain_mapping)
+    df_val_final['label'] = df_val_final['label'].map(pain_mapping)
+
+# Normalize features
+pain_survey_columns = ['pain_survey_1', 'pain_survey_2', 'pain_survey_3', 'pain_survey_4', 'n_legs', 'n_hands', 'n_eyes']
+joint_columns = [f'joint_{i:02d}' for i in range(30)]
+scale_columns = pain_survey_columns + joint_columns
+
+train_max = df_train_final[scale_columns].max()
+train_min = df_train_final[scale_columns].min()
+
+for column in scale_columns:
+    df_train_final[column] = (df_train_final[column] - train_min[column]) / (train_max[column] - train_min[column] + 1e-8)
+    df_val_final[column] = (df_val_final[column] - train_min[column]) / (train_max[column] - train_min[column] + 1e-8)
+
+# Build sequences
+print("\nBuilding sequences...")
+X_train_final, y_train_final = build_sequences(
+    df_train_final, 
+    window=final_best_params['window_size'], 
+    stride=final_best_params['stride']
+)
+X_val_final, y_val_final = build_sequences(
+    df_val_final, 
+    window=final_best_params['window_size'], 
+    stride=final_best_params['stride']
+)
+
+print(f"Training sequences: {X_train_final.shape}")
+print(f"Validation sequences: {X_val_final.shape}")
+
+# Create PyTorch datasets
+train_ds_final = TensorDataset(
+    torch.from_numpy(X_train_final.astype(np.float32)), 
+    torch.from_numpy(y_train_final.astype(np.int64))
+)
+val_ds_final = TensorDataset(
+    torch.from_numpy(X_val_final.astype(np.float32)), 
+    torch.from_numpy(y_val_final.astype(np.int64))
+)
+
+# Create data loaders
+train_loader_final = make_loader(
+    train_ds_final, 
+    batch_size=final_best_params['batch_size'], 
+    shuffle=True, 
+    drop_last=False
+)
+val_loader_final = make_loader(
+    val_ds_final, 
+    batch_size=final_best_params['batch_size'], 
+    shuffle=False, 
+    drop_last=False
+)
+
+# ========================================
+# STEP 4: INITIALIZE FINAL MODEL
+# ========================================
+print("\n" + "="*60)
+print("INITIALIZING FINAL MODEL")
+print("="*60)
+
+final_model = RecurrentClassifier(
+    input_size=X_train_final.shape[2],
+    hidden_size=final_best_params['hidden_size'],
+    num_layers=final_best_params['hidden_layers'],
+    num_classes=num_classes,
+    dropout_rate=final_best_params['dropout_rate'],
+    bidirectional=final_best_params['bidirectional'],
+    rnn_type=final_best_params['rnn_type']
+).to(device)
+
+recurrent_summary(final_model, input_size=(final_best_params['window_size'], X_train_final.shape[2]))
+
+# ========================================
+# STEP 5: TRAIN FINAL MODEL
+# ========================================
+print("\n" + "="*60)
+print("TRAINING FINAL MODEL")
+print("="*60)
+
+optimizer_final = torch.optim.AdamW(
+    final_model.parameters(), 
+    lr=final_best_params['learning_rate'], 
+    weight_decay=final_best_params['l2_lambda']
+)
+scaler_final = torch.amp.GradScaler(enabled=(device.type == 'cuda'))
+
+# Create directory for final model
+os.makedirs("models/final_model", exist_ok=True)
+
+# Train with MORE epochs than CV (since we have more data)
+final_epochs = int(final_best_params['epochs'] * 1.5)  # 1.5x more epochs
+final_patience = PATIENCE * 2
+print(f"Training for {final_epochs} epochs (1.5x CV epochs due to more training data)")
+
+final_model, training_history = fit(
+    model=final_model,
+    train_loader=train_loader_final,
+    val_loader=val_loader_final,
+    epochs=final_epochs,
+    criterion=criterion,
+    optimizer=optimizer_final,
+    scaler=scaler_final,
+    device=device,
+    l1_lambda=final_best_params['l1_lambda'],
+    l2_lambda=0,  # Already in optimizer weight_decay
+    patience=final_patience,
+    evaluation_metric="val_f1",
+    mode='max',
+    restore_best_weights=True,
+    writer=None,
+    verbose=VERBOSE,
+    experiment_name="final_model/best"
+)
+
+print(f"\n✓ Final model trained!")
+print(f"Best Validation F1: {max(training_history['val_f1']):.4f}")
+print(f"CV F1 Score: {best_score:.4f}")
+print(f"Improvement: {max(training_history['val_f1']) - best_score:+.4f}")
+
+# ========================================
+# STEP 6: LOAD TEST DATA
+# ========================================
+print("\n" + "="*60)
+print("PREPARING TEST DATA")
+print("="*60)
+
+X_test = pd.read_csv('pirate_pain_test.csv')
+
+# Drop joint_30
+if 'joint_30' in X_test.columns:
+    X_test.drop('joint_30', axis=1, inplace=True)
+
+# Convert categorical to binary
+binary_cols = ['n_hands', 'n_eyes', 'n_legs']
+for col in binary_cols:
+    X_test[col] = X_test[col].map(lambda x: 1 if str(x).lower().strip() == 'two' else 0)
+
+df_test_original = X_test.copy()
+df_test_processed = X_test.copy()
+
+# Normalize test data using TRAINING statistics (from final training set)
+for column in scale_columns:
+    df_test_processed[column] = (df_test_processed[column] - train_min[column]) / (train_max[column] - train_min[column] + 1e-8)
+
+# Build test sequences
+df_test_processed['label'] = 0  # Dummy label
+X_test_sequences, _ = build_sequences(
+    df_test_processed,
+    window=final_best_params['window_size'],
+    stride=final_best_params['stride']
+)
+
+print(f"Test sequences: {X_test_sequences.shape}")
+
+# ========================================
+# STEP 7: MAKE PREDICTIONS
+# ========================================
+print("\n" + "="*60)
+print("MAKING PREDICTIONS")
+print("="*60)
+
+# Load the best model weights
+final_model.load_state_dict(torch.load("models/final_model/best_model.pt", map_location=device))
+final_model.eval()
+
+# Create test loader
+test_ds = TensorDataset(torch.from_numpy(X_test_sequences.astype(np.float32)))
+test_loader = DataLoader(
+    test_ds,
+    batch_size=final_best_params['batch_size'],
+    shuffle=False,
+    num_workers=2
+)
+
+# Get predictions
+all_predictions = []
+with torch.no_grad():
+    for (xb,) in test_loader:
+        xb = xb.to(device)
+        logits = final_model(xb)
+        preds = logits.argmax(dim=1).cpu().numpy()
+        all_predictions.append(preds)
+
+all_predictions = np.concatenate(all_predictions)
+print(f"Total window predictions: {len(all_predictions)}")
+
+# ========================================
+# STEP 8: MAP PREDICTIONS TO SAMPLES
+# ========================================
+sample_predictions = []
+pred_idx = 0
+
+unique_samples = df_test_processed['sample_index'].unique()
+window = final_best_params['window_size']
+stride = final_best_params['stride']
+
+print(f"\nMapping {len(all_predictions)} windows to {len(unique_samples)} samples...")
+
+for sample_id in unique_samples:
+    sample_data = df_test_processed[df_test_processed['sample_index'] == sample_id]
+    n_timestamps = len(sample_data)
+
+    # Padding logic (same as build_sequences)
+    padding_len = window - n_timestamps % window if n_timestamps % window != 0 else 0
+    total_len = n_timestamps + padding_len
+
+    # Count windows
+    n_windows = 0
+    idx = 0
+    while idx + window <= total_len:
+        n_windows += 1
+        idx += stride
+
+    # Safety check
+    if pred_idx + n_windows > len(all_predictions):
+        n_windows = max(0, len(all_predictions) - pred_idx)
+
+    # Majority voting
+    if n_windows > 0:
+        end_idx = int(pred_idx + n_windows)
+        sample_window_predictions = all_predictions[int(pred_idx):end_idx]
+
+        if len(sample_window_predictions) > 0:
+            final_prediction = np.bincount(sample_window_predictions).argmax()
+        else:
+            final_prediction = 0
+    else:
+        final_prediction = 0
+
+    sample_predictions.append({
+        'sample_index': sample_id,
+        'predicted_label_id': final_prediction,
+        'predicted_label': label_reverse_mapping[final_prediction]
+    })
+
+    pred_idx += n_windows
+
+print(f"Used {pred_idx}/{len(all_predictions)} window predictions")
+
+# ========================================
+# STEP 9: SAVE RESULTS
+# ========================================
+predictions_df = pd.DataFrame(sample_predictions)
+
+output_df = df_test_original[['sample_index']].drop_duplicates().merge(
+    predictions_df,
+    on='sample_index',
+    how='left'
+)
+
+# Handle missing predictions
+if output_df['predicted_label'].isna().any():
+    print(f"WARNING: {output_df['predicted_label'].isna().sum()} samples missing predictions")
+    output_df['predicted_label'].fillna('no_pain', inplace=True)
+
+# Save CSV
+output_filename = 'pirate_pain_test_predictions.csv'
+output_df[['sample_index', 'predicted_label']].to_csv(output_filename, index=False)
+
+print("\n" + "="*60)
+print("PREDICTIONS SAVED")
+print("="*60)
+print(f"Output file: {output_filename}")
+print(f"Total samples: {len(output_df)}")
+print(f"\n📊 Performance Comparison:")
+print(f"  CV Mean F1: {best_score:.4f}")
+print(f"  Final Model Val F1: {max(training_history['val_f1']):.4f}")
+print(f"  Improvement: {max(training_history['val_f1']) - best_score:+.4f} ({((max(training_history['val_f1'])/best_score - 1)*100):+.1f}%)")
+
+print("\n📈 Prediction Distribution:")
+print(output_df['predicted_label'].value_counts())
+print("\nPercentages:")
+for pain_level in ['no_pain', 'low_pain', 'high_pain']:
+    count = (output_df['predicted_label'] == pain_level).sum()
+    percentage = (count / len(output_df)) * 100
+    print(f"  {pain_level}: {count} ({percentage:.1f}%)")
+
+print("\n🔍 First 10 predictions:")
+print(output_df.head(10))
 
 
-# In[ ]:
+# In[25]:
 
 
 import shutil
