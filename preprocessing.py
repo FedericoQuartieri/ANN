@@ -42,7 +42,7 @@ TEMPORAL_FEATURES_CONFIG = {
     'diff': False,                # Rate of change (velocity) - captures dynamics
     'rolling_mean': False,        # Smoothed trend - reduces noise
     'rolling_std': False,         # Local volatility - captures variation patterns
-    'ewm_mean': True,           # Exponentially weighted mean - emphasizes recent values
+    'ewm_mean': False,           # Exponentially weighted mean - emphasizes recent values
 }
 
 # Temporal Feature Parameters
