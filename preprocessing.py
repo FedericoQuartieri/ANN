@@ -42,7 +42,7 @@ TEMPORAL_FEATURES_CONFIG = {
     'diff': False,                # Rate of change (velocity) - captures dynamics
     'rolling_mean': False,        # Smoothed trend - reduces noise
     'rolling_std': False,         # Local volatility - captures variation patterns
-    'ewm_mean': False,           # Exponentially weighted mean - emphasizes recent values
+    'ewm_mean': True,           # Exponentially weighted mean - emphasizes recent values
 }
 
 # Temporal Feature Parameters
@@ -57,12 +57,12 @@ OUTLIER_CLIP_UPPER_PCT = 99.0   # Upper percentile for clipping (per sample)
 OUTLIER_LOG_TRANSFORM = True    # Apply log transform to near-zero skewed features
 
 # Normalization
-SCALING_METHOD = 'robust'       # Options: 'robust' (median+IQR) or 'minmax'
+SCALING_METHOD = 'minmax'       # Options: 'robust' (median+IQR) or 'minmax'
 
 # Duplicate Column Detection
-CORRELATION_THRESHOLD = 0.9999  # Threshold for detecting duplicate columns
-DUPLICATE_TOLERANCE_ABS = 1e-9  # Absolute tolerance for np.allclose
-DUPLICATE_TOLERANCE_REL = 1e-6  # Relative tolerance for np.allclose
+CORRELATION_THRESHOLD = 0.9999999999999999999  # Threshold for detecting duplicate columns
+DUPLICATE_TOLERANCE_ABS = 1e-40  # Absolute tolerance for np.allclose
+DUPLICATE_TOLERANCE_REL = 1e-40  # Relative tolerance for np.allclose
 
 # Initialize
 random.seed(SEED)
