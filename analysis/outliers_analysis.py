@@ -9,7 +9,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # File Paths
-ROOT = Path('.') / "analysis"
+ROOT = Path('.')
 
 DATA_DIR = ROOT / 'data'
 PLOT_DIR = ROOT / 'plots'

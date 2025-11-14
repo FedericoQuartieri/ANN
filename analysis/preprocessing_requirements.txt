@@ -1,0 +1,6 @@
+# Packages requiired for analysis and preprocessing
+numpy
+pandas
+matplotlib
+seaborn
+scipy

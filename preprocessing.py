@@ -19,7 +19,7 @@ from pathlib import Path
 SEED = 42
 
 # File Paths
-ROOT = Path('.') / "analysis"
+ROOT = Path('.')
 TRAIN_CSV = ROOT / 'data' / 'pirate_pain_train.csv'
 LABEL_CSV = ROOT / 'data' / 'pirate_pain_train_labels.csv'
 TEST_CSV = ROOT / 'data' / 'pirate_pain_test.csv'
@@ -74,9 +74,38 @@ OUT_DIR.mkdir(exist_ok=True)
 # Data Loading
 # ===============
 
-X_train_df = pd.read_csv(TRAIN_CSV)
-X_test_df = pd.read_csv(TEST_CSV)
-y_df = pd.read_csv(LABEL_CSV)
+# Verify data directory and expected CSV files exist and give helpful messages
+DATA_DIR = ROOT / 'data'
+if not DATA_DIR.exists():
+    raise FileNotFoundError(
+        f"Data directory not found: {DATA_DIR}\n"
+        "Place your CSV files in this folder or update the paths at the top of the script.\n"
+        "Expected files: pirate_pain_train.csv, pirate_pain_train_labels.csv, pirate_pain_test.csv"
+    )
+
+missing_files = [p for p in (TRAIN_CSV, LABEL_CSV, TEST_CSV) if not p.exists()]
+if missing_files:
+    missing_names = ', '.join(p.name for p in missing_files)
+    raise FileNotFoundError(
+        f"Missing data files in {DATA_DIR}: {missing_names}.\n"
+        "Make sure these files are present or adjust the CSV path variables at the top of the script."
+    )
+
+# Load CSVs with clearer errors
+try:
+    X_train_df = pd.read_csv(TRAIN_CSV)
+except Exception as e:
+    raise RuntimeError(f"Failed to read training CSV '{TRAIN_CSV}': {e}")
+
+try:
+    X_test_df = pd.read_csv(TEST_CSV)
+except Exception as e:
+    raise RuntimeError(f"Failed to read test CSV '{TEST_CSV}': {e}")
+
+try:
+    y_df = pd.read_csv(LABEL_CSV)
+except Exception as e:
+    raise RuntimeError(f"Failed to read labels CSV '{LABEL_CSV}': {e}")
 
 # numeric label mapping if labels are strings
 if y_df[label_column_name].dtype == object:
@@ -259,7 +288,7 @@ if cols_to_drop:
 
 if ENABLE_OUTLIER_HANDLING:
     print("\n--- Handling Outliers ---")
-    print("It can take a while :((( ...")
+    print("It can take a while...")
     
     def handle_outliers_per_sample(df, feature_cols, static_cols, discrete_cols, 
                                     lower_pct=1.0, upper_pct=99.0, 
@@ -362,50 +391,56 @@ else:
 
 print(f"\n--- Normalizing Time-Series Features ({SCALING_METHOD.upper()} Scaling) ---")
 
+# Exclude static encoded columns from normalization (keep them as binary 0/1)
+temporal_only_cols = [c for c in time_feature_cols if c not in static_encoded_cols]
+print(f"Normalizing {len(temporal_only_cols)} temporal features (excluding {len(static_encoded_cols)} static binary features)")
+
 if SCALING_METHOD == 'robust':
     # Robust Scaling: Uses Median + IQR (better for outliers)
     print("Using Robust Scaler (Median + IQR) - better for data with outliers")
     
     # Compute median and IQR from TRAIN data (after capping)
-    medians = X_train_df[time_feature_cols].median(axis=0)
-    Q1 = X_train_df[time_feature_cols].quantile(0.25, axis=0)
-    Q3 = X_train_df[time_feature_cols].quantile(0.75, axis=0)
+    medians = X_train_df[temporal_only_cols].median(axis=0)
+    Q1 = X_train_df[temporal_only_cols].quantile(0.25, axis=0)
+    Q3 = X_train_df[temporal_only_cols].quantile(0.75, axis=0)
     IQR = Q3 - Q1
     
     # Avoid division by zero
     IQR[IQR == 0] = 1
     
     # Transform Training set: (X - median) / IQR
-    X_train_df[time_feature_cols] = (X_train_df[time_feature_cols] - medians) / IQR
+    X_train_df[temporal_only_cols] = (X_train_df[temporal_only_cols] - medians) / IQR
     
     # Transform Test set using TRAIN statistics
-    X_test_df[time_feature_cols] = (X_test_df[time_feature_cols] - medians) / IQR
+    X_test_df[temporal_only_cols] = (X_test_df[temporal_only_cols] - medians) / IQR
     
-    print('Robust scaling complete. Features centered at 0 with IQR-based scaling.')
+    print('Robust scaling complete. Temporal features centered at 0 with IQR-based scaling.')
+    print(f'Static features ({", ".join(static_encoded_cols)}) kept as binary (0/1) values.')
 
 elif SCALING_METHOD == 'minmax':
     # Min-Max Scaling: Scales to [0, 1] range
     print("Using Min-Max Scaler - scales features to [0, 1] range")
     
     # Compute min and max from TRAIN data
-    min_vals = X_train_df[time_feature_cols].min(axis=0)
-    data_range = X_train_df[time_feature_cols].max(axis=0) - min_vals
+    min_vals = X_train_df[temporal_only_cols].min(axis=0)
+    data_range = X_train_df[temporal_only_cols].max(axis=0) - min_vals
     
     # Avoid division by zero
     data_range[data_range == 0] = 1
     
     # Transform Training set
-    X_train_df[time_feature_cols] = (X_train_df[time_feature_cols] - min_vals) / data_range
+    X_train_df[temporal_only_cols] = (X_train_df[temporal_only_cols] - min_vals) / data_range
     
     # Transform Test set using TRAIN statistics
-    X_test_df[time_feature_cols] = (X_test_df[time_feature_cols] - min_vals) / data_range
+    X_test_df[temporal_only_cols] = (X_test_df[temporal_only_cols] - min_vals) / data_range
     
-    print('Min-Max scaling complete. Features scaled to [0, 1] range.')
+    print('Min-Max scaling complete. Temporal features scaled to [0, 1] range.')
+    print(f'Static features ({", ".join(static_encoded_cols)}) kept as binary (0/1) values.')
 
 else:
     raise ValueError(f"Unknown SCALING_METHOD: {SCALING_METHOD}. Use 'robust' or 'minmax'.")
 
-print('Scaling complete. Features normalized.')
+print('Scaling complete. Temporal features normalized, static features preserved as binary.')
 
 
 # --- Final Processed Data ---

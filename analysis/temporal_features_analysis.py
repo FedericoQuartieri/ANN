@@ -6,7 +6,7 @@ import seaborn as sns
 from scipy import stats
 
 # File Paths
-ROOT = Path('.') / "analysis"
+ROOT = Path('.')
 
 DATA_DIR = ROOT / 'data'
 PLOT_DIR = ROOT / 'plots'
