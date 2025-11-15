@@ -48,7 +48,7 @@ ENABLE_TEMPORAL_FEATURES = True # Create temporal features (diff, rolling stats,
 
 TEMPORAL_FEATURES_CONFIG = {
     'diff': False,                # Rate of change (velocity) - captures dynamics
-    'rolling_mean': True,        # Smoothed trend - reduces noise
+    'rolling_mean': False,        # Smoothed trend - reduces noise
     'rolling_std': False,         # Local volatility - captures variation patterns
     'ewm_mean': True,             # Exponentially weighted mean - emphasizes recent values
 }
@@ -63,9 +63,9 @@ ENABLE_DROP_CONSTANT_FEATURES = True    # Drop zero-variance (constant) columns
 ENABLE_DROP_DUPLICATE_FEATURES = False   # Drop duplicate columns based on correlation
 
 # Duplicate Column Detection Parameters
-CORRELATION_THRESHOLD = 0.99999  # Threshold for detecting duplicate columns (very high to avoid false positives)
-DUPLICATE_TOLERANCE_ABS = 1e-6   # Absolute tolerance for np.allclose (relaxed for time-series)
-DUPLICATE_TOLERANCE_REL = 1e-3   # Relative tolerance for np.allclose (relaxed for time-series)
+CORRELATION_THRESHOLD = 0.9999999999  # Threshold for detecting duplicate columns (very high to avoid false positives)
+DUPLICATE_TOLERANCE_ABS = 1e-40   # Absolute tolerance for np.allclose (relaxed for time-series)
+DUPLICATE_TOLERANCE_REL = 1e-40  # Relative tolerance for np.allclose (relaxed for time-series)
 
 # 4. Outlier Handling
 ENABLE_OUTLIER_HANDLING = True  # Enable/disable outlier preprocessing
