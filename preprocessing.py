@@ -36,13 +36,21 @@ label_column_name = 'label'
 # Label Mapping
 LABEL_MAP = {'no_pain':0, 'low_pain':1, 'high_pain':2}
 
-# Temporal feature configuration
+# ===============
+# Preprocessing Configuration - Enable/Disable Each Step
+# ===============
+
+# 1. Static Categorical Encoding
+ENABLE_STATIC_ENCODING = True   # Encode static categorical features (n_legs, n_hands, n_eyes)
+
+# 2. Temporal Feature Engineering
+ENABLE_TEMPORAL_FEATURES = True # Create temporal features (diff, rolling stats, ewm)
 
 TEMPORAL_FEATURES_CONFIG = {
     'diff': False,                # Rate of change (velocity) - captures dynamics
-    'rolling_mean': False,        # Smoothed trend - reduces noise
+    'rolling_mean': True,        # Smoothed trend - reduces noise
     'rolling_std': False,         # Local volatility - captures variation patterns
-    'ewm_mean': True,           # Exponentially weighted mean - emphasizes recent values
+    'ewm_mean': True,             # Exponentially weighted mean - emphasizes recent values
 }
 
 # Temporal Feature Parameters
@@ -50,19 +58,24 @@ ROLLING_WINDOW = 5              # Window size for rolling statistics
 ROLLING_MIN_PERIODS = 1         # Minimum periods for rolling calculations
 EWM_SPAN = 5                    # Span for exponential weighted mean
 
-# Outlier Handling
+# 3. Dropping Useless Features
+ENABLE_DROP_CONSTANT_FEATURES = True    # Drop zero-variance (constant) columns
+ENABLE_DROP_DUPLICATE_FEATURES = False   # Drop duplicate columns based on correlation
+
+# Duplicate Column Detection Parameters
+CORRELATION_THRESHOLD = 0.99999  # Threshold for detecting duplicate columns (very high to avoid false positives)
+DUPLICATE_TOLERANCE_ABS = 1e-6   # Absolute tolerance for np.allclose (relaxed for time-series)
+DUPLICATE_TOLERANCE_REL = 1e-3   # Relative tolerance for np.allclose (relaxed for time-series)
+
+# 4. Outlier Handling
 ENABLE_OUTLIER_HANDLING = True  # Enable/disable outlier preprocessing
 OUTLIER_CLIP_LOWER_PCT = 1.0    # Lower percentile for clipping (per sample)
 OUTLIER_CLIP_UPPER_PCT = 99.0   # Upper percentile for clipping (per sample)
 OUTLIER_LOG_TRANSFORM = True    # Apply log transform to near-zero skewed features
 
-# Normalization
-SCALING_METHOD = 'minmax'       # Options: 'robust' (median+IQR) or 'minmax'
-
-# Duplicate Column Detection
-CORRELATION_THRESHOLD = 0.9999999999999999999  # Threshold for detecting duplicate columns
-DUPLICATE_TOLERANCE_ABS = 1e-40  # Absolute tolerance for np.allclose
-DUPLICATE_TOLERANCE_REL = 1e-40  # Relative tolerance for np.allclose
+# 5. Normalization/Scaling
+ENABLE_SCALING = True           # Enable/disable feature scaling
+SCALING_METHOD = 'minmax'       # Options: 'robust' (median+IQR), 'minmax', or 'standard' (mean+std)
 
 # Initialize
 random.seed(SEED)
@@ -139,32 +152,38 @@ def encode_static_binary(df, static_cols):
         encoding_info[col] = mapping
     return df, encoding_info
 
-print("\n--- Encoding Static Categorical Features ---")
+if ENABLE_STATIC_ENCODING:
+    print("\n--- Encoding Static Categorical Features ---")
 
-# apply encoding on TRAIN
-sample_static = X_train_df.groupby('sample_index')[static_cat_cols].first().reset_index()
-sample_static_encoded, encoding_info = encode_static_binary(sample_static, static_cat_cols)
+    # apply encoding on TRAIN
+    sample_static = X_train_df.groupby('sample_index')[static_cat_cols].first().reset_index()
+    sample_static_encoded, encoding_info = encode_static_binary(sample_static, static_cat_cols)
 
-# Merge encoded static features back into the time-series dataframe
-X_train_df = X_train_df.merge(sample_static_encoded[['sample_index'] + [c+'_enc' for c in static_cat_cols]],
-            on='sample_index', how='left')
+    # Merge encoded static features back into the time-series dataframe
+    X_train_df = X_train_df.merge(sample_static_encoded[['sample_index'] + [c+'_enc' for c in static_cat_cols]],
+                on='sample_index', how='left')
 
-# Drop original static columns
-X_train_df = X_train_df.drop(columns=static_cat_cols)
+    # Drop original static columns
+    X_train_df = X_train_df.drop(columns=static_cat_cols)
 
-# Apply same encoding to TEST using learned mappings
-sample_static_test = X_test_df.groupby('sample_index')[static_cat_cols].first().reset_index()
-for col in static_cat_cols:
-    sample_static_test[col+'_enc'] = sample_static_test[col].map(encoding_info[col]).astype(int)
+    # Apply same encoding to TEST using learned mappings
+    sample_static_test = X_test_df.groupby('sample_index')[static_cat_cols].first().reset_index()
+    for col in static_cat_cols:
+        sample_static_test[col+'_enc'] = sample_static_test[col].map(encoding_info[col]).astype(int)
 
-X_test_df = X_test_df.merge(sample_static_test[['sample_index'] + [c+'_enc' for c in static_cat_cols]],
-            on='sample_index', how='left')
-X_test_df = X_test_df.drop(columns=static_cat_cols)
+    X_test_df = X_test_df.merge(sample_static_test[['sample_index'] + [c+'_enc' for c in static_cat_cols]],
+                on='sample_index', how='left')
+    X_test_df = X_test_df.drop(columns=static_cat_cols)
 
-static_encoded_cols = [c+'_enc' for c in static_cat_cols]
-time_feature_cols += static_encoded_cols
+    static_encoded_cols = [c+'_enc' for c in static_cat_cols]
+    time_feature_cols += static_encoded_cols
 
-print('Encoded static columns:', static_encoded_cols)
+    print('Encoded static columns:', static_encoded_cols)
+else:
+    print("\n--- Static Categorical Encoding: DISABLED ---")
+    static_encoded_cols = []
+    # Keep original static columns in the feature list
+    time_feature_cols += static_cat_cols
 
 # --- Temporal Feature Engineering ---
 
@@ -224,65 +243,84 @@ def create_temporal_features(df, feature_cols, sample_col='sample_index', config
     
     return df, new_features
 
-print("\n--- Creating Temporal Features ---")
+if ENABLE_TEMPORAL_FEATURES:
+    print("\n--- Creating Temporal Features ---")
 
-# Only apply to non-static features
-temporal_base_cols = pain_survey_cols + joint_cols
-X_train_df, train_temporal_features = create_temporal_features(
-    X_train_df, temporal_base_cols, config=TEMPORAL_FEATURES_CONFIG
-)
-X_test_df, test_temporal_features = create_temporal_features(
-    X_test_df, temporal_base_cols, config=TEMPORAL_FEATURES_CONFIG
-)
+    # Only apply to non-static features
+    temporal_base_cols = pain_survey_cols + joint_cols
+    X_train_df, train_temporal_features = create_temporal_features(
+        X_train_df, temporal_base_cols, config=TEMPORAL_FEATURES_CONFIG
+    )
+    X_test_df, test_temporal_features = create_temporal_features(
+        X_test_df, temporal_base_cols, config=TEMPORAL_FEATURES_CONFIG
+    )
 
-# Add temporal features to the feature list
-time_feature_cols += train_temporal_features
+    # Add temporal features to the feature list
+    time_feature_cols += train_temporal_features
+else:
+    print("\n--- Creating Temporal Features: DISABLED ---")
+    train_temporal_features = []
 
 # --- Dropping Useless Features ---
 
 print("\n--- Dropping Useless Features ---")
 
 # Drop constant (zero-variance) columns across entire training dataframe
-const_cols = []
-for c in time_feature_cols:
-    if X_train_df[c].nunique(dropna=False) <= 1:
-        const_cols.append(c)
-        print("Found constant column to drop:", c)
+if ENABLE_DROP_CONSTANT_FEATURES:
+    print("Checking for constant features...")
+    const_cols = []
+    for c in time_feature_cols:
+        if X_train_df[c].nunique(dropna=False) <= 1:
+            const_cols.append(c)
+            print(f"  Found constant column to drop: {c}")
 
-if const_cols:
-    X_train_df = X_train_df.drop(columns=const_cols)
-    X_test_df = X_test_df.drop(columns=const_cols)
-    time_feature_cols = [c for c in time_feature_cols if c not in const_cols]
+    if const_cols:
+        X_train_df = X_train_df.drop(columns=const_cols)
+        X_test_df = X_test_df.drop(columns=const_cols)
+        time_feature_cols = [c for c in time_feature_cols if c not in const_cols]
+        print(f"  Dropped {len(const_cols)} constant features")
+    else:
+        print("  No constant features found")
+else:
+    print("Constant feature removal: DISABLED")
 
 # Detect exact-duplicate columns (value-wise equality) and drop duplicates
-print("Checking for duplicate columns...")
-cols_to_drop = []
-cols_to_check = time_feature_cols.copy()
+if ENABLE_DROP_DUPLICATE_FEATURES:
+    print("Checking for duplicate columns...")
+    cols_to_drop = []
+    cols_to_check = time_feature_cols.copy()
 
-# Build correlation matrix once
-corr_matrix = X_train_df[time_feature_cols].corr().abs()
+    # FIXED: More conservative duplicate detection for time-series data
+    # Build correlation matrix once
+    corr_matrix = X_train_df[time_feature_cols].corr().abs()
 
-# Find perfectly correlated pairs (correlation = 1.0)
-checked = set()
-for i, col_i in enumerate(time_feature_cols):
-    if col_i in cols_to_drop or col_i in checked:
-        continue
-    for j, col_j in enumerate(time_feature_cols[i+1:], start=i+1):
-        if col_j in cols_to_drop or col_j in checked:
+    # Find highly correlated pairs
+    checked = set()
+    for i, col_i in enumerate(time_feature_cols):
+        if col_i in cols_to_drop or col_i in checked:
             continue
-        # Check if perfectly correlated
-        if corr_matrix.loc[col_i, col_j] > CORRELATION_THRESHOLD:
-            # Verify with exact comparison
-            if np.allclose(X_train_df[col_i].values, X_train_df[col_j].values, 
-                          atol=DUPLICATE_TOLERANCE_ABS, rtol=DUPLICATE_TOLERANCE_REL):
-                cols_to_drop.append(col_j)
-                print(f"Found duplicate column to drop: {col_j} (duplicate of {col_i})")
-    checked.add(col_i)
+        for j, col_j in enumerate(time_feature_cols[i+1:], start=i+1):
+            if col_j in cols_to_drop or col_j in checked:
+                continue
+            # Check if correlation is above threshold
+            if corr_matrix.loc[col_i, col_j] > CORRELATION_THRESHOLD:
+                # FIXED: Use more relaxed tolerance for time-series data
+                # Also check if values are actually very similar (not just correlated)
+                if np.allclose(X_train_df[col_i].values, X_train_df[col_j].values, 
+                              atol=DUPLICATE_TOLERANCE_ABS, rtol=DUPLICATE_TOLERANCE_REL):
+                    cols_to_drop.append(col_j)
+                    print(f"  Found duplicate column to drop: {col_j} (duplicate of {col_i}, corr={corr_matrix.loc[col_i, col_j]:.6f})")
+        checked.add(col_i)
 
-if cols_to_drop:
-    X_train_df = X_train_df.drop(columns=cols_to_drop)
-    X_test_df = X_test_df.drop(columns=cols_to_drop)
-    time_feature_cols = [c for c in time_feature_cols if c not in cols_to_drop]
+    if cols_to_drop:
+        X_train_df = X_train_df.drop(columns=cols_to_drop)
+        X_test_df = X_test_df.drop(columns=cols_to_drop)
+        time_feature_cols = [c for c in time_feature_cols if c not in cols_to_drop]
+        print(f"  Dropped {len(cols_to_drop)} duplicate features")
+    else:
+        print("  No duplicate features found")
+else:
+    print("Duplicate feature removal: DISABLED")
 
 # --- Outlier Handling ---
 
@@ -389,58 +427,95 @@ else:
 
 # --- Normalization ---
 
-print(f"\n--- Normalizing Time-Series Features ({SCALING_METHOD.upper()} Scaling) ---")
+if ENABLE_SCALING:
+    print(f"\n--- Normalizing Time-Series Features ({SCALING_METHOD.upper()} Scaling) ---")
 
-# Exclude static encoded columns from normalization (keep them as binary 0/1)
-temporal_only_cols = [c for c in time_feature_cols if c not in static_encoded_cols]
-print(f"Normalizing {len(temporal_only_cols)} temporal features (excluding {len(static_encoded_cols)} static binary features)")
+    # Exclude static encoded columns from normalization (keep them as binary 0/1)
+    temporal_only_cols = [c for c in time_feature_cols if c not in static_encoded_cols]
+    print(f"Normalizing {len(temporal_only_cols)} temporal features (excluding {len(static_encoded_cols)} static binary features)")
 
-if SCALING_METHOD == 'robust':
-    # Robust Scaling: Uses Median + IQR (better for outliers)
-    print("Using Robust Scaler (Median + IQR) - better for data with outliers")
-    
-    # Compute median and IQR from TRAIN data (after capping)
-    medians = X_train_df[temporal_only_cols].median(axis=0)
-    Q1 = X_train_df[temporal_only_cols].quantile(0.25, axis=0)
-    Q3 = X_train_df[temporal_only_cols].quantile(0.75, axis=0)
-    IQR = Q3 - Q1
-    
-    # Avoid division by zero
-    IQR[IQR == 0] = 1
-    
-    # Transform Training set: (X - median) / IQR
-    X_train_df[temporal_only_cols] = (X_train_df[temporal_only_cols] - medians) / IQR
-    
-    # Transform Test set using TRAIN statistics
-    X_test_df[temporal_only_cols] = (X_test_df[temporal_only_cols] - medians) / IQR
-    
-    print('Robust scaling complete. Temporal features centered at 0 with IQR-based scaling.')
-    print(f'Static features ({", ".join(static_encoded_cols)}) kept as binary (0/1) values.')
+    if SCALING_METHOD == 'robust':
+        # Robust Scaling: Uses Median + IQR (better for outliers)
+        # FIXED: Use larger IQR threshold to avoid division by very small values
+        print("Using Robust Scaler (Median + IQR) - better for data with outliers")
+        
+        # Compute median and IQR from TRAIN data (after capping)
+        medians = X_train_df[temporal_only_cols].median(axis=0)
+        Q1 = X_train_df[temporal_only_cols].quantile(0.25, axis=0)
+        Q3 = X_train_df[temporal_only_cols].quantile(0.75, axis=0)
+        IQR = Q3 - Q1
+        
+        # FIXED: Avoid division by very small IQR values (use std as fallback)
+        # This prevents extreme scaled values when IQR is very small
+        small_iqr_mask = IQR < 0.01  # Threshold for "too small" IQR
+        if small_iqr_mask.any():
+            # For features with small IQR, use standard deviation instead
+            stds = X_train_df[temporal_only_cols].std(axis=0)
+            IQR[small_iqr_mask] = stds[small_iqr_mask]
+            print(f"  Warning: {small_iqr_mask.sum()} features had IQR < 0.01, using std instead")
+        
+        # Final safety: avoid any remaining zeros
+        IQR[IQR == 0] = 1
+        
+        # Transform Training set: (X - median) / IQR
+        X_train_df[temporal_only_cols] = (X_train_df[temporal_only_cols] - medians) / IQR
+        
+        # Transform Test set using TRAIN statistics
+        X_test_df[temporal_only_cols] = (X_test_df[temporal_only_cols] - medians) / IQR
+        
+        print('Robust scaling complete. Temporal features centered at 0 with IQR-based scaling.')
+        if static_encoded_cols:
+            print(f'Static features ({", ".join(static_encoded_cols)}) kept as binary (0/1) values.')
 
-elif SCALING_METHOD == 'minmax':
-    # Min-Max Scaling: Scales to [0, 1] range
-    print("Using Min-Max Scaler - scales features to [0, 1] range")
-    
-    # Compute min and max from TRAIN data
-    min_vals = X_train_df[temporal_only_cols].min(axis=0)
-    data_range = X_train_df[temporal_only_cols].max(axis=0) - min_vals
-    
-    # Avoid division by zero
-    data_range[data_range == 0] = 1
-    
-    # Transform Training set
-    X_train_df[temporal_only_cols] = (X_train_df[temporal_only_cols] - min_vals) / data_range
-    
-    # Transform Test set using TRAIN statistics
-    X_test_df[temporal_only_cols] = (X_test_df[temporal_only_cols] - min_vals) / data_range
-    
-    print('Min-Max scaling complete. Temporal features scaled to [0, 1] range.')
-    print(f'Static features ({", ".join(static_encoded_cols)}) kept as binary (0/1) values.')
+    elif SCALING_METHOD == 'minmax':
+        # Min-Max Scaling: Scales to [0, 1] range
+        print("Using Min-Max Scaler - scales features to [0, 1] range")
+        
+        # Compute min and max from TRAIN data
+        min_vals = X_train_df[temporal_only_cols].min(axis=0)
+        data_range = X_train_df[temporal_only_cols].max(axis=0) - min_vals
+        
+        # Avoid division by zero
+        data_range[data_range == 0] = 1
+        
+        # Transform Training set
+        X_train_df[temporal_only_cols] = (X_train_df[temporal_only_cols] - min_vals) / data_range
+        
+        # Transform Test set using TRAIN statistics
+        X_test_df[temporal_only_cols] = (X_test_df[temporal_only_cols] - min_vals) / data_range
+        
+        print('Min-Max scaling complete. Temporal features scaled to [0, 1] range.')
+        if static_encoded_cols:
+            print(f'Static features ({", ".join(static_encoded_cols)}) kept as binary (0/1) values.')
+
+    elif SCALING_METHOD == 'standard':
+        # Standard Scaling: Uses Mean + Std (most common for neural networks)
+        print("Using Standard Scaler (Mean + Std) - commonly used with neural networks")
+        
+        # Compute mean and std from TRAIN data
+        means = X_train_df[temporal_only_cols].mean(axis=0)
+        stds = X_train_df[temporal_only_cols].std(axis=0)
+        
+        # Avoid division by zero
+        stds[stds == 0] = 1
+        
+        # Transform Training set: (X - mean) / std
+        X_train_df[temporal_only_cols] = (X_train_df[temporal_only_cols] - means) / stds
+        
+        # Transform Test set using TRAIN statistics
+        X_test_df[temporal_only_cols] = (X_test_df[temporal_only_cols] - means) / stds
+        
+        print('Standard scaling complete. Temporal features centered at 0 with unit variance.')
+        if static_encoded_cols:
+            print(f'Static features ({", ".join(static_encoded_cols)}) kept as binary (0/1) values.')
+
+    else:
+        raise ValueError(f"Unknown SCALING_METHOD: {SCALING_METHOD}. Use 'robust', 'minmax', or 'standard'.")
+
+    print('Scaling complete. Temporal features normalized, static features preserved as binary.')
 
 else:
-    raise ValueError(f"Unknown SCALING_METHOD: {SCALING_METHOD}. Use 'robust' or 'minmax'.")
-
-print('Scaling complete. Temporal features normalized, static features preserved as binary.')
+    print("\n--- Normalization/Scaling: DISABLED ---")
 
 
 # --- Final Processed Data ---
