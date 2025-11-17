@@ -120,7 +120,7 @@ try:
 except Exception as e:
     raise RuntimeError(f"Failed to read labels CSV '{LABEL_CSV}': {e}")
 
-# numeric label mapping if labels are strings
+# Numeric label mapping if labels are strings
 if y_df[label_column_name].dtype == object:
     y_df[label_column_name] = y_df[label_column_name].map(LABEL_MAP)
 else:
@@ -155,7 +155,7 @@ def encode_static_binary(df, static_cols):
 if ENABLE_STATIC_ENCODING:
     print("\n--- Encoding Static Categorical Features ---")
 
-    # apply encoding on TRAIN
+    # Apply encoding on TRAIN
     sample_static = X_train_df.groupby('sample_index')[static_cat_cols].first().reset_index()
     sample_static_encoded, encoding_info = encode_static_binary(sample_static, static_cat_cols)
 
