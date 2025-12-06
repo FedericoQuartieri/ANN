@@ -50,6 +50,16 @@ class TrainingConfig:
 
 
 # ---------- Predefined experiment configs ----------
+TEST = TrainingConfig(
+    exp_name="test",
+    backbone="resnet18",
+    img_size=224,
+    use_masks=False,
+    mask_mode="crop_bbox",
+    epochs=1,
+)
+
+
 
 # Baseline: ResNet18, 224x224, no masks
 BASELINE = TrainingConfig(
@@ -100,4 +110,5 @@ EXPERIMENTS: Dict[str, TrainingConfig] = {
     "resnet50_big": RESNET50_BIG,
     "resnet50_big_masks": RESNET50_BIG_MASKS,
     "effb0_224_maskmul_f1": EFFB0_224_MASKMUL_F1,
+    "test": TEST,
 }
