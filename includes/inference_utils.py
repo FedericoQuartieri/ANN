@@ -32,12 +32,14 @@ def create_test_loader(
         transform=val_transform,
     )
 
+    use_pin_memory = torch.cuda.is_available()
+
     test_loader = DataLoader(
         test_ds,
         batch_size=cfg.batch_size,
         shuffle=False,
         num_workers=cfg.num_workers,
-        pin_memory=True,
+        pin_memory=use_pin_memory,
     )
 
     return test_loader, test_files
@@ -65,6 +67,7 @@ def run_inference_and_save(
     """Run inference on the test set and save a submission CSV.
 
     - If output_csv is None, use submission_{exp_name}.csv
+    - Se siamo su Colab, prova anche a fare il download del file.
     """
     model.eval()
     all_names: List[str] = []
@@ -85,13 +88,23 @@ def run_inference_and_save(
         {"sample_index": all_names, "label": labels}
     ).sort_values("sample_index")
 
-    # Default filename: submission_<exp_name>.csv
+    # ---------- nome file in base all'esperimento ----------
     if output_csv is None:
         exp_name = getattr(cfg, "exp_name", "experiment")
-        output_csv = f"submission_{exp_name}.csv"
+        safe_name = str(exp_name).replace(" ", "_")
+        output_csv = f"submission_{safe_name}.csv"
 
     save_dir = _get_out_root(cfg)
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(save_dir, output_csv)
     submission_df.to_csv(out_path, index=False)
     print("Saved submission to:", out_path)
+
+    # ---------- download automatico se siamo su Colab ----------
+    try:
+        from google.colab import files  # type: ignore
+        files.download(out_path)
+        print("Triggered Colab download for:", out_path)
+    except Exception:
+        # non siamo su Colab / nessun download possibile
+        pass
