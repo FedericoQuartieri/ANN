@@ -5,3 +5,4 @@ tensorboard/
 an2dl2526c1.zip
 .venv/
 *.png
+__pycache__/
