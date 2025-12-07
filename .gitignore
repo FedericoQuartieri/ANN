@@ -6,3 +6,6 @@ an2dl2526c1.zip
 *.png
 __pycache__/
 data/
+local_lib/
+.vscode/
+configs/

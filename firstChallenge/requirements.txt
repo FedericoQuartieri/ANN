@@ -77,3 +77,11 @@ triton==3.5.1
 typing_extensions==4.15.0
 tzdata==2025.2
 wcwidth==0.2.14
+
+# Additional packages required by notebooks
+torchsummary
+torchview
+tensorboard
+opencv-python
+seaborn
+requests
