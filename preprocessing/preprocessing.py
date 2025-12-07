@@ -106,6 +106,7 @@ def detect_tissue_regions(image, white_threshold=240):
 def find_rectangular_regions(image, min_area_ratio=0.01):
     """
     Find rectangular tissue regions in image (adaptive threshold until separation is clear)
+    Handles both white and black backgrounds
     
     Args:
         image: BGR image (numpy array)
@@ -117,13 +118,35 @@ def find_rectangular_regions(image, min_area_ratio=0.01):
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Try progressively lower thresholds until we find 2 separate regions
-    # Start from pure white and go down
     min_area = image.shape[0] * image.shape[1] * min_area_ratio
     
-    for white_threshold in range(255, 200, -5):  # Try from 255 down to 200 in steps of 5
+    # Detect background type by checking corner pixels
+    corner_values = [
+        gray[0, 0], gray[0, -1], 
+        gray[-1, 0], gray[-1, -1]
+    ]
+    avg_corner = np.mean(corner_values)
+    is_white_background = avg_corner > 127
+    
+    # Try different thresholds based on background type
+    if is_white_background:
+        # White background: tissue is darker
+        thresholds = range(255, 200, -5)  # Try from 255 down to 200
+        def create_mask(gray, threshold):
+            return (gray < threshold).astype(np.uint8) * 255
+        def check_tissue(region, threshold):
+            return np.sum(region < threshold)
+    else:
+        # Black background: tissue is brighter
+        thresholds = range(0, 55, 5)  # Try from 0 up to 55
+        def create_mask(gray, threshold):
+            return (gray > threshold).astype(np.uint8) * 255
+        def check_tissue(region, threshold):
+            return np.sum(region > threshold)
+    
+    for threshold in thresholds:
         # Create binary mask: non-background = tissue
-        tissue_mask = (gray < white_threshold).astype(np.uint8) * 255
+        tissue_mask = create_mask(gray, threshold)
         
         # Apply minimal morphological operations to clean noise but keep regions separate
         kernel_small = np.ones((3, 3), np.uint8)
@@ -150,7 +173,7 @@ def find_rectangular_regions(image, min_area_ratio=0.01):
             
             # Check if this region contains significant tissue (not mostly background)
             region = gray[y:y+h, x:x+w]
-            non_bg_pixels = np.sum(region < white_threshold)
+            non_bg_pixels = check_tissue(region, threshold)
             non_bg_ratio = non_bg_pixels / (w * h)
             
             # Only keep regions that have at least 5% non-background pixels
@@ -162,7 +185,7 @@ def find_rectangular_regions(image, min_area_ratio=0.01):
             rectangles.sort(key=lambda r: r[4], reverse=True)
             return [(x, y, w, h) for x, y, w, h, _ in rectangles]
         
-        # If we found more than 2, keep trying lower thresholds
+        # If we found more than 2, keep trying different thresholds
         # (might be noise creating extra regions)
         if len(rectangles) > 2:
             continue
@@ -174,6 +197,7 @@ def find_rectangular_regions(image, min_area_ratio=0.01):
 def split_double_image(image_path, mask_path):
     """
     Split a double image into two separate images by detecting rectangular regions
+    Applies aggressive cropping to ensure no background is included
     
     Args:
         image_path: Path to the double image file
@@ -201,16 +225,32 @@ def split_double_image(image_path, mask_path):
     for i in range(min(2, len(rectangles))):
         x, y, w, h = rectangles[i]
         
-        # Add small padding
-        padding = 5
-        x = max(0, x - padding)
-        y = max(0, y - padding)
-        w = min(image.shape[1] - x, w + 2*padding)
-        h = min(image.shape[0] - y, h + 2*padding)
+        # Apply aggressive inward cropping to ensure no background is caught
+        # Crop more from the edges to be safe
+        crop_margin = 15  # Crop 15 pixels from each edge
+        x_new = x + crop_margin
+        y_new = y + crop_margin
+        w_new = w - 2 * crop_margin
+        h_new = h - 2 * crop_margin
+        
+        # Ensure we don't crop too much (minimum size check)
+        if w_new < 50 or h_new < 50:
+            # If cropping would make it too small, use less aggressive cropping
+            crop_margin = 5
+            x_new = x + crop_margin
+            y_new = y + crop_margin
+            w_new = w - 2 * crop_margin
+            h_new = h - 2 * crop_margin
+        
+        # Ensure bounds are valid
+        x_new = max(0, x_new)
+        y_new = max(0, y_new)
+        x2 = min(image.shape[1], x_new + w_new)
+        y2 = min(image.shape[0], y_new + h_new)
         
         # Extract region from both image and mask
-        img_region = image[y:y+h, x:x+w].copy()
-        mask_region = mask[y:y+h, x:x+w].copy()
+        img_region = image[y_new:y2, x_new:x2].copy()
+        mask_region = mask[y_new:y2, x_new:x2].copy()
         
         regions.append((img_region, mask_region))
     
