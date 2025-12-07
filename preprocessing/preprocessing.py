@@ -17,6 +17,13 @@ REMOVE_SHREK = True   # Remove Shrek-contaminated images
 FIX_STAINED = True    # Fix green-stained images using background color
 SPLIT_DOUBLES = True  # Split double images into two separate images
 REMOVE_BLACK_RECT = True  # Remove black rectangles from images
+RESIZE_AND_NORMALIZE = True  # Resize images and apply normalization/contrast enhancement
+
+# Resize and normalization settings
+TARGET_SIZE = 1024  # Target size for resizing (will be TARGET_SIZE x TARGET_SIZE)
+APPLY_CLAHE = True  # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+CLAHE_CLIP_LIMIT = 2.0  # CLAHE clip limit
+CLAHE_TILE_GRID_SIZE = (8, 8)  # CLAHE tile grid size
 
 # ============================================================================
 # PATHS
@@ -305,6 +312,76 @@ def remove_black_rectangle(image):
     # If no good region found, return original
     return image
 
+def resize_and_normalize_image(image, mask, target_size=1024, apply_clahe=True, 
+                                clip_limit=2.0, tile_grid_size=(8, 8)):
+    """
+    Resize image and mask to target size while maintaining aspect ratio,
+    and apply contrast enhancement via CLAHE
+    
+    Args:
+        image: BGR image (numpy array)
+        mask: Grayscale mask (numpy array)
+        target_size: Target size for output (will be target_size x target_size)
+        apply_clahe: Whether to apply CLAHE for contrast enhancement
+        clip_limit: CLAHE clip limit parameter
+        tile_grid_size: CLAHE tile grid size parameter
+    
+    Returns:
+        Tuple of (resized_image, resized_mask)
+    """
+    h, w = image.shape[:2]
+    
+    # Calculate scaling factor to fit within target size while maintaining aspect ratio
+    scale = min(target_size / w, target_size / h)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    
+    # Resize image and mask
+    resized_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    resized_mask = cv2.resize(mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    
+    # Calculate background color from border pixels (before CLAHE to get original color)
+    border_thickness = 10
+    border_pixels = []
+    # Top and bottom edges
+    border_pixels.append(resized_image[:border_thickness, :].reshape(-1, 3))
+    border_pixels.append(resized_image[-border_thickness:, :].reshape(-1, 3))
+    # Left and right edges
+    border_pixels.append(resized_image[:, :border_thickness].reshape(-1, 3))
+    border_pixels.append(resized_image[:, -border_thickness:].reshape(-1, 3))
+    
+    # Concatenate all border pixels and get median
+    all_border_pixels = np.vstack(border_pixels)
+    bg_color = np.median(all_border_pixels, axis=0).astype(np.uint8)
+    
+    # Apply CLAHE for contrast enhancement if requested (BEFORE padding)
+    if apply_clahe:
+        # Convert to LAB color space
+        lab = cv2.cvtColor(resized_image, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        
+        # Apply CLAHE to L channel
+        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+        l_clahe = clahe.apply(l)
+        
+        # Merge channels and convert back to BGR
+        lab_clahe = cv2.merge([l_clahe, a, b])
+        resized_image = cv2.cvtColor(lab_clahe, cv2.COLOR_LAB2BGR)
+    
+    # Create canvas with uniform background color
+    canvas_image = np.full((target_size, target_size, 3), bg_color, dtype=np.uint8)
+    canvas_mask = np.zeros((target_size, target_size), dtype=np.uint8)
+    
+    # Calculate padding to center the image
+    pad_top = (target_size - new_h) // 2
+    pad_left = (target_size - new_w) // 2
+    
+    # Place resized image and mask on canvas
+    canvas_image[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = resized_image
+    canvas_mask[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = resized_mask
+    
+    return canvas_image, canvas_mask
+
 def detect_green_stain(image):
     """
     Detect green stain in image using HSV color thresholding
@@ -333,20 +410,28 @@ def detect_green_stain(image):
     
     return mask
 
-def fix_stained_image(image_path):
+def fix_stained_image(image_path, mask_path=None):
     """
     Fix a stained image by replacing green stains with background color
+    Also fixes the corresponding mask by setting stained areas to black (0)
     
     Args:
         image_path: Path to the image file
+        mask_path: Path to the mask file (optional)
     
     Returns:
-        Fixed image (numpy array) or None if reading fails
+        Tuple of (fixed_image, fixed_mask, stain_pixels) or (fixed_image, None, stain_pixels) if no mask
+        Returns None if reading fails
     """
     # Read image
     image = cv2.imread(str(image_path))
     if image is None:
         return None
+    
+    # Read mask if provided
+    mask = None
+    if mask_path is not None:
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
     
     # Detect green stain
     stain_mask = detect_green_stain(image)
@@ -361,13 +446,19 @@ def fix_stained_image(image_path):
         # Create a copy of the image
         fixed_image = image.copy()
         
-        # Replace stained pixels with background color
+        # Replace stained pixels with background color in image
         fixed_image[stain_mask > 0] = bg_color
         
-        return fixed_image, stain_pixels
+        # Fix mask if provided: set stained areas to black (0)
+        fixed_mask = None
+        if mask is not None:
+            fixed_mask = mask.copy()
+            fixed_mask[stain_mask > 0] = 0  # Set stained areas to black
+        
+        return fixed_image, fixed_mask, stain_pixels
     else:
-        # No stain detected, return original
-        return image, 0
+        # No stain detected, return originals
+        return image, mask, 0
 
 # ============================================================================
 # PREPROCESSING FUNCTIONS
@@ -538,20 +629,25 @@ def preprocess_dataset():
                     copied_pairs += 1
             # Check if this image needs stain fixing
             elif FIX_STAINED and img_name in stained_images:
-                result = fix_stained_image(src_img)
+                result = fix_stained_image(src_img, src_mask)
                 if result is not None:
-                    fixed_image, stain_pixels = result
+                    fixed_image, fixed_mask, stain_pixels = result
                     # Save the fixed image
                     cv2.imwrite(str(dst_img), fixed_image)
+                    # Save the fixed mask (or copy original if None)
+                    if fixed_mask is not None:
+                        cv2.imwrite(str(dst_mask), fixed_mask)
+                    else:
+                        shutil.copy2(src_mask, dst_mask)
+                    
                     if stain_pixels > 0:
                         fixed_stains += 1
                         total_stain_pixels += stain_pixels
                 else:
-                    # Failed to fix, copy original
+                    # Failed to fix, copy originals
                     shutil.copy2(src_img, dst_img)
+                    shutil.copy2(src_mask, dst_mask)
                 
-                # Always copy mask
-                shutil.copy2(src_mask, dst_mask)
                 copied_pairs += 1
             # Check if this image has black rectangle to remove
             elif REMOVE_BLACK_RECT and img_name in black_addition_images:
@@ -597,6 +693,53 @@ def preprocess_dataset():
         print(f"✓ Split {split_doubles} double images into {split_doubles * 2} separate images")
     if REMOVE_BLACK_RECT and cropped_blacks > 0:
         print(f"✓ Removed black rectangles from {cropped_blacks} images")
+    
+    # ========================================================================
+    # STEP 3a: Resize and normalize all images
+    # ========================================================================
+    if RESIZE_AND_NORMALIZE:
+        print_section("Resizing and Normalizing Images")
+        print(f"Target size: {TARGET_SIZE}x{TARGET_SIZE}")
+        print(f"CLAHE contrast enhancement: {'Enabled' if APPLY_CLAHE else 'Disabled'}")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images for resizing...")
+        resized_count = 0
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read image and mask
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    # Resize and normalize
+                    resized_image, resized_mask = resize_and_normalize_image(
+                        image, mask, 
+                        target_size=TARGET_SIZE,
+                        apply_clahe=APPLY_CLAHE,
+                        clip_limit=CLAHE_CLIP_LIMIT,
+                        tile_grid_size=CLAHE_TILE_GRID_SIZE
+                    )
+                    
+                    # Overwrite with resized versions
+                    cv2.imwrite(str(img_path), resized_image)
+                    cv2.imwrite(str(mask_path), resized_mask)
+                    resized_count += 1
+        
+        print(f"\n✓ Resized and normalized {resized_count} image-mask pairs")
+        if APPLY_CLAHE:
+            print(f"✓ Applied CLAHE contrast enhancement (clip={CLAHE_CLIP_LIMIT}, grid={CLAHE_TILE_GRID_SIZE})")
+    
     if missing_files:
         print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
     
@@ -684,6 +827,7 @@ def preprocess_dataset():
     print(f"Preprocessed dataset: {len(df_filtered)} samples")
     print(f"Removed: {len(df_original) - len(df_filtered)} samples")
     
+    print("\nPreprocessing steps applied:")
     for contamination_type, contaminated_images in exclusion_sets:
         print(f"  - {contamination_type}: {len(contaminated_images)} images removed")
     
@@ -693,6 +837,10 @@ def preprocess_dataset():
         print(f"  - Doubles: {split_doubles} images split into {split_doubles * 2} images")
     if REMOVE_BLACK_RECT and cropped_blacks > 0:
         print(f"  - Black rectangles: {cropped_blacks} images cropped")
+    if RESIZE_AND_NORMALIZE:
+        print(f"  - Resized: All images normalized to {TARGET_SIZE}x{TARGET_SIZE}")
+        if APPLY_CLAHE:
+            print(f"  - CLAHE: Contrast enhancement applied (clip={CLAHE_CLIP_LIMIT})")
     
     print(f"\nPreprocessed data saved to:")
     print(f"  - Images: {PP_DATA_DIR}")
