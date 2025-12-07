@@ -11,16 +11,11 @@ from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-
 from .config import TrainingConfig
 
 
 def _get_data_root(cfg: TrainingConfig) -> str:
-    """Return the base directory that contains train_data, test_data, train_labels.csv.
-
-    If cfg.data_dir is absolute, use it directly.
-    Otherwise, join project_root and data_dir.
-    """
+    """Return the base directory that contains train_data, test_data, train_labels.csv."""
     if os.path.isabs(cfg.data_dir):
         return cfg.data_dir
     return os.path.join(cfg.project_root, cfg.data_dir)
@@ -35,10 +30,14 @@ def build_paths(cfg: TrainingConfig) -> Tuple[str, str, str]:
     return train_img_dir, test_img_dir, labels_path
 
 
-def load_labels_and_split(
+def load_full_labels(
     cfg: TrainingConfig,
-) -> Tuple[pd.DataFrame, pd.DataFrame, List[str], Dict[str, int], Dict[int, str]]:
-    """Load labels CSV, create label encodings and perform train/val split."""
+) -> Tuple[pd.DataFrame, List[str], Dict[str, int], Dict[int, str]]:
+    """
+    Load the full labels dataframe and build label encodings, without splitting.
+
+    This is used both by the simple hold-out split and by StratifiedKFold.
+    """
     train_img_dir, _, labels_path = build_paths(cfg)
 
     labels_df = pd.read_csv(labels_path)
@@ -50,12 +49,21 @@ def load_labels_and_split(
 
     labels_df["label_idx"] = labels_df["label"].map(label_to_idx)
 
-    # Build full image path (helpful for debugging)
+    # Full image path (useful for debugging / Dataset)
     labels_df["img_path"] = labels_df["sample_index"].apply(
         lambda fname: os.path.join(train_img_dir, fname)
     )
 
-    # Train/val split
+    return labels_df, unique_labels, label_to_idx, idx_to_label
+
+
+def load_labels_and_split(
+    cfg: TrainingConfig,
+) -> Tuple[pd.DataFrame, pd.DataFrame, List[str], Dict[str, int], Dict[int, str]]:
+    """Load labels and perform a single stratified train/validation split."""
+    labels_df, unique_labels, label_to_idx, idx_to_label = load_full_labels(cfg)
+
+    # Train/val split (hold-out)
     train_df, val_df = train_test_split(
         labels_df,
         test_size=cfg.val_size,
