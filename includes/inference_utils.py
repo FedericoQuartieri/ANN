@@ -55,7 +55,6 @@ def _get_out_root(cfg: TrainingConfig) -> str:
         return cfg.out_dir
     return os.path.join(cfg.project_root, cfg.out_dir)
 
-
 def run_inference_and_save(
     cfg: TrainingConfig,
     model: torch.nn.Module,
@@ -63,11 +62,11 @@ def run_inference_and_save(
     idx_to_label: Dict[int, str],
     device: torch.device,
     output_csv: str | None = None,
-):
+) -> str:
     """Run inference on the test set and save a submission CSV.
 
-    - If output_csv is None, use submission_{exp_name}.csv
-    - Se siamo su Colab, prova anche a fare il download del file.
+    - Se output_csv è None, usa 'submission_{cfg.exp_name}.csv'
+    - Altrimenti usa ESATTAMENTE il nome passato.
     """
     model.eval()
     all_names: List[str] = []
@@ -88,16 +87,21 @@ def run_inference_and_save(
         {"sample_index": all_names, "label": labels}
     ).sort_values("sample_index")
 
-    # ---------- nome file in base all'esperimento ----------
+    # ---------- decidi il nome del file ----------
     if output_csv is None:
         exp_name = getattr(cfg, "exp_name", "experiment")
         safe_name = str(exp_name).replace(" ", "_")
-        output_csv = f"submission_{safe_name}.csv"
+        filename = f"submission_{safe_name}.csv"
+    else:
+        filename = output_csv
 
     save_dir = _get_out_root(cfg)
     os.makedirs(save_dir, exist_ok=True)
-    out_path = os.path.join(save_dir, output_csv)
+    out_path = os.path.join(save_dir, filename)
+
     submission_df.to_csv(out_path, index=False)
+    print(f"[run_inference_and_save] exp_name={getattr(cfg, 'exp_name', None)} "
+          f"| filename='{filename}'")
     print("Saved submission to:", out_path)
 
     # ---------- download automatico se siamo su Colab ----------
@@ -106,5 +110,6 @@ def run_inference_and_save(
         files.download(out_path)
         print("Triggered Colab download for:", out_path)
     except Exception:
-        # non siamo su Colab / nessun download possibile
         pass
+
+    return out_path
