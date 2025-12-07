@@ -1,0 +1,680 @@
+"""
+Preprocessing Script for Training Dataset
+This script applies various preprocessing steps to the training data.
+"""
+
+import os
+import shutil
+import pandas as pd
+import cv2
+import numpy as np
+from pathlib import Path
+
+# ============================================================================
+# CONFIGURATION - Toggle preprocessing steps here
+# ============================================================================
+REMOVE_SHREK = True   # Remove Shrek-contaminated images
+FIX_STAINED = True    # Fix green-stained images using background color
+SPLIT_DOUBLES = True  # Split double images into two separate images
+REMOVE_BLACK_RECT = True  # Remove black rectangles from images
+
+# ============================================================================
+# PATHS
+# ============================================================================
+BASE_DIR = Path(__file__).parent.parent.resolve()
+DATA_DIR = BASE_DIR / "data"
+TRAIN_DATA_DIR = DATA_DIR / "train_data"
+TRAIN_LABELS_PATH = DATA_DIR / "train_labels.csv"
+
+# Output directories
+PP_DATA_DIR = DATA_DIR / "pp_train_data"
+PP_LABELS_PATH = DATA_DIR / "pp_train_labels.csv"
+
+# Contamination lists
+SHREK_CONTAMINED_PATH = BASE_DIR / "preprocessing" / "shrek_contamined.txt"
+STAINED_CONTAMINED_PATH = BASE_DIR / "preprocessing" / "stained_contamined.txt"
+DOUBLE_IMAGES_PATH = BASE_DIR / "preprocessing" / "double_images.txt"
+BLACK_ADDITION_PATH = BASE_DIR / "preprocessing" / "black_addition.txt"
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def print_section(title):
+    """Print a formatted section header"""
+    print("\n" + "=" * 80)
+    print(f" {title}")
+    print("=" * 80)
+
+def load_contamination_list(filepath):
+    """Load a list of contaminated image names from a text file (UTF-8 clean format)"""
+    if not filepath.exists():
+        print(f"Warning: {filepath} not found!")
+        return set()
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            images = set(line.strip() for line in f if line.strip())
+        return images
+    except Exception as e:
+        print(f"Error reading {filepath}: {e}")
+        return set()
+
+def get_mask_filename(img_filename):
+    """Convert image filename to corresponding mask filename"""
+    return img_filename.replace('img_', 'mask_')
+
+def get_background_color(image):
+    """
+    Get the most common background color in the image
+    
+    Args:
+        image: BGR image (numpy array)
+    
+    Returns:
+        Background color as BGR tuple
+    """
+    # Reshape image to list of pixels
+    pixels = image.reshape(-1, 3)
+    
+    # Use histogram to find most common color
+    # We'll use a simplified approach: get median color
+    # (background typically fills most of the image)
+    background_color = np.median(pixels, axis=0).astype(np.uint8)
+    
+    return tuple(background_color)
+
+def detect_tissue_regions(image, white_threshold=240):
+    """
+    Detect tissue regions in image (non-white areas)
+    
+    Args:
+        image: BGR image (numpy array)
+        white_threshold: Threshold to consider pixel as white background
+    
+    Returns:
+        Binary mask where white pixels indicate tissue
+    """
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Create mask for non-white pixels (tissue)
+    tissue_mask = gray < white_threshold
+    
+    return tissue_mask.astype(np.uint8) * 255
+
+def find_rectangular_regions(image, min_area_ratio=0.01):
+    """
+    Find rectangular tissue regions in image (adaptive threshold until separation is clear)
+    
+    Args:
+        image: BGR image (numpy array)
+        min_area_ratio: Minimum area as ratio of total image area
+    
+    Returns:
+        List of bounding boxes [(x, y, w, h), ...] sorted by area
+    """
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Try progressively lower thresholds until we find 2 separate regions
+    # Start from pure white and go down
+    min_area = image.shape[0] * image.shape[1] * min_area_ratio
+    
+    for white_threshold in range(255, 200, -5):  # Try from 255 down to 200 in steps of 5
+        # Create binary mask: non-background = tissue
+        tissue_mask = (gray < white_threshold).astype(np.uint8) * 255
+        
+        # Apply minimal morphological operations to clean noise but keep regions separate
+        kernel_small = np.ones((3, 3), np.uint8)
+        tissue_mask = cv2.morphologyEx(tissue_mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+        tissue_mask = cv2.morphologyEx(tissue_mask, cv2.MORPH_CLOSE, kernel_small, iterations=1)
+        
+        # Find all contours
+        contours, _ = cv2.findContours(tissue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            continue
+        
+        # Get significant rectangles
+        rectangles = []
+        
+        for contour in contours:
+            # Get bounding box
+            x, y, w, h = cv2.boundingRect(contour)
+            area = w * h
+            
+            # Filter by minimum area
+            if area < min_area:
+                continue
+            
+            # Check if this region contains significant tissue (not mostly background)
+            region = gray[y:y+h, x:x+w]
+            non_bg_pixels = np.sum(region < white_threshold)
+            non_bg_ratio = non_bg_pixels / (w * h)
+            
+            # Only keep regions that have at least 5% non-background pixels
+            if non_bg_ratio > 0.05:
+                rectangles.append((x, y, w, h, area))
+        
+        # If we found exactly 2 significant regions, we're done!
+        if len(rectangles) == 2:
+            rectangles.sort(key=lambda r: r[4], reverse=True)
+            return [(x, y, w, h) for x, y, w, h, _ in rectangles]
+        
+        # If we found more than 2, keep trying lower thresholds
+        # (might be noise creating extra regions)
+        if len(rectangles) > 2:
+            continue
+    
+    # If we exit the loop, we didn't find exactly 2 regions
+    # Return empty list to indicate failure
+    return []
+
+def split_double_image(image_path, mask_path):
+    """
+    Split a double image into two separate images by detecting rectangular regions
+    
+    Args:
+        image_path: Path to the double image file
+        mask_path: Path to the corresponding mask file
+    
+    Returns:
+        List of (image, mask) tuples, or None if splitting fails
+    """
+    # Read image and mask
+    image = cv2.imread(str(image_path))
+    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    
+    if image is None or mask is None:
+        return None
+    
+    # Find rectangular tissue regions
+    rectangles = find_rectangular_regions(image)
+    
+    # We expect exactly 2 rectangular regions for a double image
+    if len(rectangles) < 2:
+        return None
+    
+    # Take the two largest regions
+    regions = []
+    for i in range(min(2, len(rectangles))):
+        x, y, w, h = rectangles[i]
+        
+        # Add small padding
+        padding = 5
+        x = max(0, x - padding)
+        y = max(0, y - padding)
+        w = min(image.shape[1] - x, w + 2*padding)
+        h = min(image.shape[0] - y, h + 2*padding)
+        
+        # Extract region from both image and mask
+        img_region = image[y:y+h, x:x+w].copy()
+        mask_region = mask[y:y+h, x:x+w].copy()
+        
+        regions.append((img_region, mask_region))
+    
+    return regions if len(regions) == 2 else None
+
+def remove_black_rectangle(image):
+    """
+    Remove black/dark rectangle from image by cropping to tissue region only
+    
+    Args:
+        image: BGR image (numpy array)
+    
+    Returns:
+        Cropped image with black rectangle removed, or original if detection fails
+    """
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Try progressively higher thresholds to find the tissue (bright) region
+    # Dark regions should be < 50, tissue regions should be > 50
+    for dark_threshold in range(50, 150, 10):
+        # Create binary mask: bright regions = tissue
+        tissue_mask = (gray > dark_threshold).astype(np.uint8) * 255
+        
+        # Clean up noise
+        kernel = np.ones((5, 5), np.uint8)
+        tissue_mask = cv2.morphologyEx(tissue_mask, cv2.MORPH_OPEN, kernel, iterations=2)
+        tissue_mask = cv2.morphologyEx(tissue_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        
+        # Find contours
+        contours, _ = cv2.findContours(tissue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            continue
+        
+        # Get the largest contour (should be the tissue region)
+        largest_contour = max(contours, key=cv2.contourArea)
+        x, y, w, h = cv2.boundingRect(largest_contour)
+        
+        # Check if this region is significant (at least 20% of image area)
+        area_ratio = (w * h) / (image.shape[0] * image.shape[1])
+        if area_ratio > 0.2:
+            # Crop to this region with small padding
+            padding = 10
+            x1 = max(0, x - padding)
+            y1 = max(0, y - padding)
+            x2 = min(image.shape[1], x + w + padding)
+            y2 = min(image.shape[0], y + h + padding)
+            
+            return image[y1:y2, x1:x2]
+    
+    # If no good region found, return original
+    return image
+
+def detect_green_stain(image):
+    """
+    Detect green stain in image using HSV color thresholding
+    
+    Args:
+        image: BGR image (numpy array)
+    
+    Returns:
+        Binary mask where white pixels indicate stain location
+    """
+    # Convert to HSV color space
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    # Define range for green color (adjust these if needed)
+    # HSV: Hue [35-85], Saturation [15-255], Value [20-255]
+    lower_green = np.array([35, 15, 20])
+    upper_green = np.array([85, 255, 255])
+    
+    # Create mask for green pixels
+    mask = cv2.inRange(hsv, lower_green, upper_green)
+    
+    # Optional: morphological operations to clean up the mask
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    
+    return mask
+
+def fix_stained_image(image_path):
+    """
+    Fix a stained image by replacing green stains with background color
+    
+    Args:
+        image_path: Path to the image file
+    
+    Returns:
+        Fixed image (numpy array) or None if reading fails
+    """
+    # Read image
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return None
+    
+    # Detect green stain
+    stain_mask = detect_green_stain(image)
+    
+    # Check if any stain was detected
+    stain_pixels = np.sum(stain_mask > 0)
+    
+    if stain_pixels > 0:
+        # Get background color
+        bg_color = get_background_color(image)
+        
+        # Create a copy of the image
+        fixed_image = image.copy()
+        
+        # Replace stained pixels with background color
+        fixed_image[stain_mask > 0] = bg_color
+        
+        return fixed_image, stain_pixels
+    else:
+        # No stain detected, return original
+        return image, 0
+
+# ============================================================================
+# PREPROCESSING FUNCTIONS
+# ============================================================================
+
+def build_exclusion_set(images_to_exclude_sets):
+    """
+    Build a set of all images to exclude from preprocessing
+    
+    Args:
+        images_to_exclude_sets: List of sets containing image filenames to exclude
+    
+    Returns:
+        Combined set of all images to exclude
+    """
+    all_excluded = set()
+    for img_set in images_to_exclude_sets:
+        all_excluded.update(img_set)
+    return all_excluded
+
+# ============================================================================
+# MAIN PREPROCESSING PIPELINE
+# ============================================================================
+
+def preprocess_dataset():
+    """Main preprocessing pipeline"""
+    
+    print_section("Dataset Preprocessing Started")
+    print(f"Source: {TRAIN_DATA_DIR}")
+    print(f"Output: {PP_DATA_DIR}")
+    
+    # Load training labels
+    print("\nLoading training labels...")
+    df_original = pd.read_csv(TRAIN_LABELS_PATH)
+    print(f"Loaded {len(df_original)} samples")
+    
+    # ========================================================================
+    # STEP 1: Build exclusion list
+    # ========================================================================
+    print_section("Building Exclusion List")
+    
+    exclusion_sets = []
+    total_excluded = set()
+    
+    # 1a. Shrek contamination
+    if REMOVE_SHREK:
+        shrek_images = load_contamination_list(SHREK_CONTAMINED_PATH)
+        if shrek_images:
+            print(f"✓ Shrek contaminated images: {len(shrek_images)}")
+            exclusion_sets.append(('Shrek', shrek_images))
+            total_excluded.update(shrek_images)
+        else:
+            print("✗ No Shrek contamination list found")
+    else:
+        print("⊗ Shrek removal: DISABLED")
+    
+    # 1b. Stained images (for fixing, not excluding)
+    stained_images = set()
+    if FIX_STAINED:
+        stained_images = load_contamination_list(STAINED_CONTAMINED_PATH)
+        if stained_images:
+            print(f"✓ Stained images to fix: {len(stained_images)}")
+        else:
+            print("✗ No stained contamination list found")
+    else:
+        print("⊗ Stain fixing: DISABLED")
+    
+    # 1c. Double images (for splitting, not excluding but also not copying directly)
+    double_images = set()
+    if SPLIT_DOUBLES:
+        double_images = load_contamination_list(DOUBLE_IMAGES_PATH)
+        if double_images:
+            print(f"✓ Double images to split: {len(double_images)}")
+        else:
+            print("✗ No double images list found")
+    else:
+        print("⊗ Double image splitting: DISABLED")
+    
+    # 1d. Black addition images (for cropping black rectangles)
+    black_addition_images = set()
+    if REMOVE_BLACK_RECT:
+        black_addition_images = load_contamination_list(BLACK_ADDITION_PATH)
+        if black_addition_images:
+            print(f"✓ Black addition images to crop: {len(black_addition_images)}")
+        else:
+            print("✗ No black addition list found")
+    else:
+        print("⊗ Black rectangle removal: DISABLED")
+    
+    print(f"\n>>> TOTAL IMAGES TO EXCLUDE: {len(total_excluded)}")
+    
+    # ========================================================================
+    # STEP 2: Filter labels DataFrame
+    # ========================================================================
+    print_section("Filtering Dataset")
+    
+    # Show breakdown by contamination type
+    for contamination_type, contaminated_images in exclusion_sets:
+        matching = df_original[df_original['sample_index'].isin(contaminated_images)]
+        print(f"{contamination_type}: {len(matching)} images will be removed")
+    
+    # Apply filter - KEEP only images NOT in exclusion list
+    df_filtered = df_original[~df_original['sample_index'].isin(total_excluded)].copy()
+    
+    removed_count = len(df_original) - len(df_filtered)
+    print(f"\nOriginal dataset: {len(df_original)} images")
+    print(f"Filtered dataset: {len(df_filtered)} images")
+    print(f"Removed: {removed_count} images ({removed_count/len(df_original)*100:.2f}%)")
+    
+    if removed_count == 0:
+        print("\n⚠ WARNING: No images were removed! Check your exclusion lists.")
+    
+    # ========================================================================
+    # STEP 3: Copy valid files
+    # ========================================================================
+    print_section("Copying Preprocessed Files")
+    
+    # Always clear and recreate output directory to ensure clean state
+    if PP_DATA_DIR.exists():
+        print(f"✓ Clearing existing directory: {PP_DATA_DIR}")
+        shutil.rmtree(PP_DATA_DIR)
+    
+    PP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"✓ Created clean directory: {PP_DATA_DIR}")
+    
+    # Copy/process valid images and masks (those in filtered DataFrame)
+    print(f"\nProcessing {len(df_filtered)} valid image-mask pairs...")
+    valid_images = set(df_filtered['sample_index'])
+    copied_pairs = 0
+    fixed_stains = 0
+    split_doubles = 0
+    cropped_blacks = 0
+    missing_files = []
+    total_stain_pixels = 0
+    
+    for idx, img_name in enumerate(valid_images, 1):
+        if idx % 200 == 0:
+            print(f"  Progress: {idx}/{len(valid_images)}")
+        
+        src_img = TRAIN_DATA_DIR / img_name
+        dst_img = PP_DATA_DIR / img_name
+        
+        mask_name = get_mask_filename(img_name)
+        src_mask = TRAIN_DATA_DIR / mask_name
+        dst_mask = PP_DATA_DIR / mask_name
+        
+        if src_img.exists() and src_mask.exists():
+            # Check if this is a double image that needs splitting
+            if SPLIT_DOUBLES and img_name in double_images:
+                regions = split_double_image(src_img, src_mask)
+                if regions is not None and len(regions) == 2:
+                    # Save the two split images
+                    base_name = img_name.replace('.png', '')
+                    for i, (img_region, mask_region) in enumerate(regions, 1):
+                        split_img_name = f"{base_name}_part{i}.png"
+                        split_mask_name = f"mask_{base_name.replace('img_', '')}_part{i}.png"
+                        
+                        cv2.imwrite(str(PP_DATA_DIR / split_img_name), img_region)
+                        cv2.imwrite(str(PP_DATA_DIR / split_mask_name), mask_region)
+                    
+                    split_doubles += 1
+                    copied_pairs += 2  # Count as 2 pairs
+                else:
+                    # Failed to split, copy original
+                    print(f"  ⚠ Could not split {img_name}, copying original")
+                    shutil.copy2(src_img, dst_img)
+                    shutil.copy2(src_mask, dst_mask)
+                    copied_pairs += 1
+            # Check if this image needs stain fixing
+            elif FIX_STAINED and img_name in stained_images:
+                result = fix_stained_image(src_img)
+                if result is not None:
+                    fixed_image, stain_pixels = result
+                    # Save the fixed image
+                    cv2.imwrite(str(dst_img), fixed_image)
+                    if stain_pixels > 0:
+                        fixed_stains += 1
+                        total_stain_pixels += stain_pixels
+                else:
+                    # Failed to fix, copy original
+                    shutil.copy2(src_img, dst_img)
+                
+                # Always copy mask
+                shutil.copy2(src_mask, dst_mask)
+                copied_pairs += 1
+            # Check if this image has black rectangle to remove
+            elif REMOVE_BLACK_RECT and img_name in black_addition_images:
+                # Read image and mask
+                image = cv2.imread(str(src_img))
+                mask = cv2.imread(str(src_mask), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    # Remove black rectangle from both image and mask
+                    cropped_image = remove_black_rectangle(image)
+                    cropped_mask = remove_black_rectangle(cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR))
+                    
+                    # Convert mask back to grayscale
+                    cropped_mask = cv2.cvtColor(cropped_mask, cv2.COLOR_BGR2GRAY)
+                    
+                    # Save cropped versions
+                    cv2.imwrite(str(dst_img), cropped_image)
+                    cv2.imwrite(str(dst_mask), cropped_mask)
+                    cropped_blacks += 1
+                else:
+                    # Failed to read, copy original
+                    shutil.copy2(src_img, dst_img)
+                    shutil.copy2(src_mask, dst_mask)
+                
+                copied_pairs += 1
+            else:
+                # Copy image and mask normally
+                shutil.copy2(src_img, dst_img)
+                shutil.copy2(src_mask, dst_mask)
+                copied_pairs += 1
+        else:
+            missing_files.append(img_name)
+            if not src_img.exists():
+                print(f"  ⚠ Missing image: {img_name}")
+            if not src_mask.exists():
+                print(f"  ⚠ Missing mask: {mask_name}")
+    
+    print(f"\n✓ Successfully processed {copied_pairs} image-mask pairs")
+    if FIX_STAINED and fixed_stains > 0:
+        avg_stain_pixels = total_stain_pixels / fixed_stains
+        print(f"✓ Fixed stains in {fixed_stains} images (avg {avg_stain_pixels:.0f} pixels/image)")
+    if SPLIT_DOUBLES and split_doubles > 0:
+        print(f"✓ Split {split_doubles} double images into {split_doubles * 2} separate images")
+    if REMOVE_BLACK_RECT and cropped_blacks > 0:
+        print(f"✓ Removed black rectangles from {cropped_blacks} images")
+    if missing_files:
+        print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
+    
+    # ========================================================================
+    # STEP 3b: Update DataFrame for split double images
+    # ========================================================================
+    if SPLIT_DOUBLES and split_doubles > 0:
+        print_section("Updating Labels for Split Images")
+        
+        # Create new rows for split images
+        new_rows = []
+        for img_name in double_images:
+            # Find the original row
+            original_row = df_filtered[df_filtered['sample_index'] == img_name]
+            if len(original_row) > 0:
+                label = original_row.iloc[0]['label']
+                base_name = img_name.replace('.png', '')
+                
+                # Create two new rows for the split images
+                new_rows.append({
+                    'sample_index': f"{base_name}_part1.png",
+                    'label': label
+                })
+                new_rows.append({
+                    'sample_index': f"{base_name}_part2.png",
+                    'label': label
+                })
+        
+        if new_rows:
+            # Remove original double images from DataFrame
+            df_filtered = df_filtered[~df_filtered['sample_index'].isin(double_images)].copy()
+            
+            # Add new split image rows
+            new_df = pd.DataFrame(new_rows)
+            df_filtered = pd.concat([df_filtered, new_df], ignore_index=True)
+            
+            print(f"✓ Removed {len(double_images)} double image entries from labels")
+            print(f"✓ Added {len(new_rows)} split image entries")
+            print(f"✓ Updated dataset size: {len(df_filtered)} images")
+    
+    # ========================================================================
+    # STEP 4: Verify exclusions
+    # ========================================================================
+    print_section("Verification")
+    
+    # Check that excluded images are NOT in output
+    verification_failed = False
+    for contamination_type, contaminated_images in exclusion_sets:
+        sample_to_check = list(contaminated_images)[:5]  # Check first 5
+        print(f"\nVerifying {contamination_type} exclusion (checking {len(sample_to_check)} samples):")
+        for img_name in sample_to_check:
+            exists_in_output = (PP_DATA_DIR / img_name).exists()
+            status = "❌ FOUND (ERROR!)" if exists_in_output else "✓ Not found (correct)"
+            print(f"  {img_name}: {status}")
+            if exists_in_output:
+                verification_failed = True
+    
+    if verification_failed:
+        print("\n⚠⚠⚠ VERIFICATION FAILED! Excluded images were found in output!")
+    else:
+        print("\n✓ Verification passed - excluded images not in output")
+    
+    # ========================================================================
+    # STEP 5: Save preprocessed labels
+    # ========================================================================
+    print_section("Saving Preprocessed Labels")
+    
+    # Always overwrite to ensure clean state
+    df_filtered.to_csv(PP_LABELS_PATH, index=False)
+    print(f"✓ Saved to: {PP_LABELS_PATH}")
+    print(f"✓ Total samples: {len(df_filtered)}")
+    
+    # Verify the file was written correctly
+    verify_df = pd.read_csv(PP_LABELS_PATH)
+    if len(verify_df) == len(df_filtered):
+        print(f"✓ Verification: CSV file is correct")
+    else:
+        print(f"⚠ Warning: CSV verification failed!")
+    
+    # ========================================================================
+    # SUMMARY
+    # ========================================================================
+    print_section("Preprocessing Summary")
+    print(f"Original dataset: {len(df_original)} samples")
+    print(f"Preprocessed dataset: {len(df_filtered)} samples")
+    print(f"Removed: {len(df_original) - len(df_filtered)} samples")
+    
+    for contamination_type, contaminated_images in exclusion_sets:
+        print(f"  - {contamination_type}: {len(contaminated_images)} images removed")
+    
+    if FIX_STAINED and fixed_stains > 0:
+        print(f"  - Stained: {fixed_stains} images fixed (not removed)")
+    if SPLIT_DOUBLES and split_doubles > 0:
+        print(f"  - Doubles: {split_doubles} images split into {split_doubles * 2} images")
+    if REMOVE_BLACK_RECT and cropped_blacks > 0:
+        print(f"  - Black rectangles: {cropped_blacks} images cropped")
+    
+    print(f"\nPreprocessed data saved to:")
+    print(f"  - Images: {PP_DATA_DIR}")
+    print(f"  - Labels: {PP_LABELS_PATH}")
+    
+    # Label distribution
+    print("\nLabel distribution in preprocessed dataset:")
+    label_counts = df_filtered['label'].value_counts()
+    for label, count in label_counts.items():
+        percentage = count / len(df_filtered) * 100
+        print(f"  {label}: {count} ({percentage:.2f}%)")
+    
+    print_section("Preprocessing Complete")
+    
+    if verification_failed:
+        print("⚠ NOTE: Verification found issues - please review the output above")
+        return False
+    return True
+
+# ============================================================================
+# MAIN EXECUTION
+# ============================================================================
+
+if __name__ == "__main__":
+    preprocess_dataset()
