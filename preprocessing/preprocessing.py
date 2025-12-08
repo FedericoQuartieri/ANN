@@ -1,6 +1,6 @@
 """
-Preprocessing Script for Training Dataset
-This script applies various preprocessing steps to the training data.
+Preprocessing Script for Training and Test Datasets
+This script applies various preprocessing steps to the training and test data.
 """
 
 import os
@@ -30,18 +30,25 @@ CLAHE_TILE_GRID_SIZE = (8, 8)  # CLAHE tile grid size
 # ============================================================================
 BASE_DIR = Path(__file__).parent.parent.resolve()
 DATA_DIR = BASE_DIR / "data"
+
+# Training data
 TRAIN_DATA_DIR = DATA_DIR / "train_data"
 TRAIN_LABELS_PATH = DATA_DIR / "train_labels.csv"
+
+# Test data
+TEST_DATA_DIR = DATA_DIR / "test_data"
 
 # Output directories
 PP_DATA_DIR = DATA_DIR / "pp_train_data"
 PP_LABELS_PATH = DATA_DIR / "pp_train_labels.csv"
+PP_TEST_DATA_DIR = DATA_DIR / "pp_test_data"
 
 # Contamination lists
 SHREK_CONTAMINED_PATH = BASE_DIR / "preprocessing" / "shrek_contamined.txt"
 STAINED_CONTAMINED_PATH = BASE_DIR / "preprocessing" / "stained_contamined.txt"
 DOUBLE_IMAGES_PATH = BASE_DIR / "preprocessing" / "double_images.txt"
 BLACK_ADDITION_PATH = BASE_DIR / "preprocessing" / "black_addition.txt"
+DOUBLE_IMAGES_TEST_PATH = BASE_DIR / "preprocessing" / "double_images_test.txt"
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -259,9 +266,23 @@ def split_double_image(image_path, mask_path):
         img_region = image[y_new:y2, x_new:x2].copy()
         mask_region = mask[y_new:y2, x_new:x2].copy()
         
-        regions.append((img_region, mask_region))
+        # Check if mask has any non-zero pixels
+        has_content = np.any(mask_region > 0)
+        
+        regions.append((img_region, mask_region, has_content))
     
-    return regions if len(regions) == 2 else None
+    # Filter to keep only regions with non-black masks
+    valid_regions = [(img, mask) for img, mask, has_content in regions if has_content]
+    
+    # Return single valid region if exactly one exists, otherwise None
+    if len(valid_regions) == 1:
+        return valid_regions
+    elif len(valid_regions) == 2:
+        # If both have content, return both (shouldn't happen normally)
+        return valid_regions
+    else:
+        # No valid regions or couldn't determine
+        return None
 
 def remove_black_rectangle(image):
     """
@@ -609,18 +630,15 @@ def preprocess_dataset():
             # Check if this is a double image that needs splitting
             if SPLIT_DOUBLES and img_name in double_images:
                 regions = split_double_image(src_img, src_mask)
-                if regions is not None and len(regions) == 2:
-                    # Save the two split images
-                    base_name = img_name.replace('.png', '')
-                    for i, (img_region, mask_region) in enumerate(regions, 1):
-                        split_img_name = f"{base_name}_part{i}.png"
-                        split_mask_name = f"mask_{base_name.replace('img_', '')}_part{i}.png"
-                        
-                        cv2.imwrite(str(PP_DATA_DIR / split_img_name), img_region)
-                        cv2.imwrite(str(PP_DATA_DIR / split_mask_name), mask_region)
+                if regions is not None and len(regions) >= 1:
+                    # Keep only the valid region(s) with non-black masks
+                    # Save with original name (no _part suffix since we keep only one)
+                    img_region, mask_region = regions[0]
+                    cv2.imwrite(str(dst_img), img_region)
+                    cv2.imwrite(str(dst_mask), mask_region)
                     
                     split_doubles += 1
-                    copied_pairs += 2  # Count as 2 pairs
+                    copied_pairs += 1
                 else:
                     # Failed to split, copy original
                     print(f"  ⚠ Could not split {img_name}, copying original")
@@ -749,36 +767,10 @@ def preprocess_dataset():
     if SPLIT_DOUBLES and split_doubles > 0:
         print_section("Updating Labels for Split Images")
         
-        # Create new rows for split images
-        new_rows = []
-        for img_name in double_images:
-            # Find the original row
-            original_row = df_filtered[df_filtered['sample_index'] == img_name]
-            if len(original_row) > 0:
-                label = original_row.iloc[0]['label']
-                base_name = img_name.replace('.png', '')
-                
-                # Create two new rows for the split images
-                new_rows.append({
-                    'sample_index': f"{base_name}_part1.png",
-                    'label': label
-                })
-                new_rows.append({
-                    'sample_index': f"{base_name}_part2.png",
-                    'label': label
-                })
-        
-        if new_rows:
-            # Remove original double images from DataFrame
-            df_filtered = df_filtered[~df_filtered['sample_index'].isin(double_images)].copy()
-            
-            # Add new split image rows
-            new_df = pd.DataFrame(new_rows)
-            df_filtered = pd.concat([df_filtered, new_df], ignore_index=True)
-            
-            print(f"✓ Removed {len(double_images)} double image entries from labels")
-            print(f"✓ Added {len(new_rows)} split image entries")
-            print(f"✓ Updated dataset size: {len(df_filtered)} images")
+        # Double images keep their original names (just cropped to valid region)
+        # No need to modify the DataFrame since names remain the same
+        print(f"✓ Processed {split_doubles} double images (kept non-black mask regions)")
+        print(f"✓ Dataset size unchanged: {len(df_filtered)} images")
     
     # ========================================================================
     # STEP 4: Verify exclusions
@@ -834,7 +826,7 @@ def preprocess_dataset():
     if FIX_STAINED and fixed_stains > 0:
         print(f"  - Stained: {fixed_stains} images fixed (not removed)")
     if SPLIT_DOUBLES and split_doubles > 0:
-        print(f"  - Doubles: {split_doubles} images split into {split_doubles * 2} images")
+        print(f"  - Doubles: {split_doubles} images cropped to valid region (kept non-black masks)")
     if REMOVE_BLACK_RECT and cropped_blacks > 0:
         print(f"  - Black rectangles: {cropped_blacks} images cropped")
     if RESIZE_AND_NORMALIZE:
@@ -860,9 +852,188 @@ def preprocess_dataset():
         return False
     return True
 
+def preprocess_test_dataset():
+    """
+    Preprocess the test dataset (no labels, no stain/shrek removal)
+    """
+    print_section("Test Dataset Preprocessing")
+    print(f"Source: {TEST_DATA_DIR}")
+    print(f"Output: {PP_TEST_DATA_DIR}")
+    
+    # ========================================================================
+    # STEP 1: Load double images list
+    # ========================================================================
+    print_section("Loading Configuration")
+    
+    double_images = set()
+    if SPLIT_DOUBLES:
+        double_images = load_contamination_list(DOUBLE_IMAGES_TEST_PATH)
+        if double_images:
+            print(f"✓ Double images to split: {len(double_images)}")
+        else:
+            print("✗ No double images list found")
+    else:
+        print("⊗ Double image splitting: DISABLED")
+    
+    # ========================================================================
+    # STEP 2: Process test files
+    # ========================================================================
+    print_section("Processing Test Files")
+    
+    # Always clear and recreate output directory to ensure clean state
+    if PP_TEST_DATA_DIR.exists():
+        print(f"✓ Clearing existing directory: {PP_TEST_DATA_DIR}")
+        shutil.rmtree(PP_TEST_DATA_DIR)
+    
+    PP_TEST_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"✓ Created clean directory: {PP_TEST_DATA_DIR}")
+    
+    # Get all image files in test directory
+    all_images = sorted([f for f in TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+    
+    print(f"\nProcessing {len(all_images)} test images...")
+    copied_pairs = 0
+    split_doubles = 0
+    missing_files = []
+    
+    for idx, src_img in enumerate(all_images, 1):
+        if idx % 200 == 0:
+            print(f"  Progress: {idx}/{len(all_images)}")
+        
+        img_name = src_img.name
+        dst_img = PP_TEST_DATA_DIR / img_name
+        
+        mask_name = get_mask_filename(img_name)
+        src_mask = TEST_DATA_DIR / mask_name
+        dst_mask = PP_TEST_DATA_DIR / mask_name
+        
+        if src_img.exists() and src_mask.exists():
+            # Check if this is a double image that needs splitting
+            if SPLIT_DOUBLES and img_name in double_images:
+                regions = split_double_image(src_img, src_mask)
+                if regions is not None and len(regions) >= 1:
+                    # Keep only the valid region with non-black mask
+                    img_region, mask_region = regions[0]
+                    cv2.imwrite(str(dst_img), img_region)
+                    cv2.imwrite(str(dst_mask), mask_region)
+                    
+                    split_doubles += 1
+                    copied_pairs += 1
+                else:
+                    # Failed to split, copy original
+                    print(f"  ⚠ Could not split {img_name}, copying original")
+                    shutil.copy2(src_img, dst_img)
+                    shutil.copy2(src_mask, dst_mask)
+                    copied_pairs += 1
+            else:
+                # Copy image and mask normally
+                shutil.copy2(src_img, dst_img)
+                shutil.copy2(src_mask, dst_mask)
+                copied_pairs += 1
+        else:
+            missing_files.append(img_name)
+            if not src_img.exists():
+                print(f"  ⚠ Missing image: {img_name}")
+            if not src_mask.exists():
+                print(f"  ⚠ Missing mask: {mask_name}")
+    
+    print(f"\n✓ Successfully processed {copied_pairs} image-mask pairs")
+    if SPLIT_DOUBLES and split_doubles > 0:
+        print(f"✓ Split {split_doubles} double images (kept non-black mask regions)")
+    if missing_files:
+        print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
+    
+    # ========================================================================
+    # STEP 3: Resize and normalize all images
+    # ========================================================================
+    if RESIZE_AND_NORMALIZE:
+        print_section("Resizing and Normalizing Images")
+        print(f"Target size: {TARGET_SIZE}x{TARGET_SIZE}")
+        print(f"CLAHE contrast enhancement: {'Enabled' if APPLY_CLAHE else 'Disabled'}")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images for resizing...")
+        resized_count = 0
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_TEST_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read image and mask
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    # Resize and normalize
+                    resized_image, resized_mask = resize_and_normalize_image(
+                        image, mask, 
+                        target_size=TARGET_SIZE,
+                        apply_clahe=APPLY_CLAHE,
+                        clip_limit=CLAHE_CLIP_LIMIT,
+                        tile_grid_size=CLAHE_TILE_GRID_SIZE
+                    )
+                    
+                    # Overwrite with resized versions
+                    cv2.imwrite(str(img_path), resized_image)
+                    cv2.imwrite(str(mask_path), resized_mask)
+                    resized_count += 1
+        
+        print(f"\n✓ Resized and normalized {resized_count} image-mask pairs")
+        if APPLY_CLAHE:
+            print(f"✓ Applied CLAHE contrast enhancement (clip={CLAHE_CLIP_LIMIT}, grid={CLAHE_TILE_GRID_SIZE})")
+    
+    # ========================================================================
+    # SUMMARY
+    # ========================================================================
+    print_section("Test Preprocessing Summary")
+    print(f"Total test images processed: {copied_pairs}")
+    
+    print("\nPreprocessing steps applied:")
+    if SPLIT_DOUBLES and split_doubles > 0:
+        print(f"  - Doubles: {split_doubles} images cropped to valid region (kept non-black masks)")
+    if RESIZE_AND_NORMALIZE:
+        print(f"  - Resized: All images normalized to {TARGET_SIZE}x{TARGET_SIZE}")
+        if APPLY_CLAHE:
+            print(f"  - CLAHE: Contrast enhancement applied (clip={CLAHE_CLIP_LIMIT})")
+    
+    print(f"\nPreprocessed test data saved to: {PP_TEST_DATA_DIR}")
+    
+    print_section("Test Preprocessing Complete")
+    return True
+
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
 if __name__ == "__main__":
-    preprocess_dataset()
+    print("="*80)
+    print(" PREPROCESSING PIPELINE")
+    print("="*80)
+    print("\nThis script will preprocess both training and test datasets.\n")
+    
+    # Preprocess training dataset
+    print("\n" + "#"*80)
+    print("# PART 1: TRAINING DATASET")
+    print("#"*80)
+    train_success = preprocess_dataset()
+    
+    # Preprocess test dataset
+    print("\n\n" + "#"*80)
+    print("# PART 2: TEST DATASET")
+    print("#"*80)
+    test_success = preprocess_test_dataset()
+    
+    # Final summary
+    print("\n\n" + "="*80)
+    print(" PREPROCESSING PIPELINE COMPLETE")
+    print("="*80)
+    print(f"Training dataset: {'✓ Success' if train_success else '✗ Failed'}")
+    print(f"Test dataset: {'✓ Success' if test_success else '✗ Failed'}")
+    print("="*80)
