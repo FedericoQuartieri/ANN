@@ -96,4 +96,69 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "augmentation": ["strong"],
     },
 
+# Baseline: ResNet18, 224x224, no masks
+BASELINE = TrainingConfig(
+    exp_name="baseline",
+    backbone="resnet18",
+    img_size=224,
+    use_masks=False,
+    mask_mode="crop_bbox",
+)
+
+# ResNet50, bigger images, more epochs, no masks
+RESNET50_BIG = TrainingConfig(
+    exp_name="resnet50_big",
+    backbone="resnet50",
+    img_size=384,
+    batch_size=16,
+    epochs=50,
+    use_masks=False,
+    mask_mode="crop_bbox",
+)
+
+# ResNet50, bigger images, masks ON (crop bbox)
+RESNET50_BIG_MASKS = TrainingConfig(
+    exp_name="resnet50_big_masks",
+    backbone="resnet50",
+    img_size=384,
+    batch_size=16,
+    epochs=50,
+    use_masks=True,
+    mask_mode="crop_bbox",
+)
+# Config per testare augmentation con maschere attive
+AUGMENTATION_MASK_TEST = TrainingConfig(
+    exp_name="aug_resnet50_crop",
+    backbone="resnet50",        # Switch to ResNet50 for better feature extraction
+    img_size=224,
+    batch_size=16,              # Increased from 8 (faster training, better gradients)
+    epochs=40,                  # Balanced: enough for convergence without overfitting
+    lr=1e-4,                    # Conservative LR for ResNet50 with augmentation
+    use_masks=True,
+    mask_mode="crop_bbox",      # Changed from multiply - preserves features better
+    val_size=0.15,
+    random_seed=101,
+)
+
+
+# ---------- Challenge 2-2 style experiments ----------
+
+# prima si chiamava CHALLENGE_2_2
+EFFB0_224_MASKMUL_F1 = TrainingConfig(
+    exp_name="effb0_224_maskmul_f1",
+    backbone="efficientnet_b0",
+    img_size=224,
+    batch_size=16,
+    epochs=50,
+    use_masks=True,
+    mask_mode="multiply",
+)
+
+EXPERIMENTS: Dict[str, TrainingConfig] = {
+    "baseline": BASELINE,
+    "resnet50_big": RESNET50_BIG,
+    "resnet50_big_masks": RESNET50_BIG_MASKS,
+    "effb0_224_maskmul_f1": EFFB0_224_MASKMUL_F1,
+    "test": TEST,
+    "aug_mask_test": AUGMENTATION_MASK_TEST,
 }

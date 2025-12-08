@@ -71,34 +71,85 @@ def load_images_to_numpy(df, img_dir, target_size=(224, 224)):
 
 def create_augmentation_transforms(
     flip_p=0.5,
+    vertical_flip_p=0.0,
     rotation_degrees=15,
+    # Zoom parameters
+    use_random_zoom=False,
+    zoom_scale_range=(0.8, 1.0),
+    img_size=224,
+    # Color augmentation parameters (separate controls)
+    brightness_factor=0.0,
+    contrast_factor=0.0,
+    saturation_factor=0.0,
+    hue_factor=0.0,
+    # Legacy color_jitter_params for backward compatibility
     color_jitter_params=None,
     random_erasing_p=0.2,
     random_erasing_scale=(0.02, 0.33),
     random_erasing_ratio=(0.3, 3.3),
+    normalize=True,
 ):
     """
     Create training augmentation pipeline with configurable parameters.
     
     Args:
         flip_p: Probability for horizontal flip
+        vertical_flip_p: Probability for vertical flip
         rotation_degrees: Max rotation angle
-        color_jitter_params: Dict with brightness, contrast, saturation, hue (or None to skip)
+        use_random_zoom: Whether to apply RandomResizedCrop (zoom)
+        zoom_scale_range: Scale range for random zoom (e.g., (0.8, 1.0) = 80-100%)
+        img_size: Target image size for RandomResizedCrop
+        brightness_factor: Brightness jitter factor (0=off, typical: 0.1-0.3)
+        contrast_factor: Contrast jitter factor (0=off, typical: 0.1-0.3)
+        saturation_factor: Saturation jitter factor (0=off, typical: 0.1-0.3)
+        hue_factor: Hue jitter factor (0=off, typical: 0.05-0.1)
+        color_jitter_params: Legacy dict with brightness, contrast, saturation, hue (overrides individual factors)
         random_erasing_p: Probability for random erasing
         random_erasing_scale: Scale range for random erasing
         random_erasing_ratio: Aspect ratio range for random erasing
+        normalize: Whether to apply ImageNet normalization (required for pretrained models)
     
     Returns:
         transforms.Compose: Augmentation pipeline
     """
-    aug_list = [transforms.RandomHorizontalFlip(p=flip_p)]
+    aug_list = []
     
+    # Random zoom (applied before other transforms)
+    if use_random_zoom:
+        aug_list.append(
+            transforms.RandomResizedCrop(
+                size=img_size,  # Use dynamic img_size from cfg
+                scale=zoom_scale_range,
+                ratio=(0.9, 1.1),  # Slight aspect ratio variation
+                interpolation=transforms.InterpolationMode.BILINEAR,
+            )
+        )
+    
+    # Horizontal flip
+    aug_list.append(transforms.RandomHorizontalFlip(p=flip_p))
+    
+    # Vertical flip
+    if vertical_flip_p > 0:
+        aug_list.append(transforms.RandomVerticalFlip(p=vertical_flip_p))
+    
+    # Rotation
     if rotation_degrees > 0:
         aug_list.append(transforms.RandomRotation(degrees=rotation_degrees))
     
+    # Color jitter (use color_jitter_params if provided, otherwise build from individual factors)
     if color_jitter_params:
         aug_list.append(transforms.ColorJitter(**color_jitter_params))
+    elif brightness_factor > 0 or contrast_factor > 0 or saturation_factor > 0 or hue_factor > 0:
+        aug_list.append(
+            transforms.ColorJitter(
+                brightness=brightness_factor if brightness_factor > 0 else 0,
+                contrast=contrast_factor if contrast_factor > 0 else 0,
+                saturation=saturation_factor if saturation_factor > 0 else 0,
+                hue=hue_factor if hue_factor > 0 else 0,
+            )
+        )
     
+    # Random erasing
     if random_erasing_p > 0:
         aug_list.append(
             transforms.RandomErasing(
@@ -106,6 +157,15 @@ def create_augmentation_transforms(
                 scale=random_erasing_scale,
                 ratio=random_erasing_ratio,
                 value=0,
+            )
+        )
+    
+    # Add ImageNet normalization (CRITICAL for pretrained models)
+    if normalize:
+        aug_list.append(
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225]
             )
         )
     
@@ -159,7 +219,13 @@ def create_augmented_loaders(
         train_aug_loader, val_aug_loader
     """
     train_aug_ds = AugmentedDataset(X_train, y_train, transform=train_transform)
-    val_aug_ds = AugmentedDataset(X_val, y_val, transform=None)
+    
+    # Validation needs ImageNet normalization (no augmentations, just normalize)
+    val_transform = transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
+    val_aug_ds = AugmentedDataset(X_val, y_val, transform=val_transform)
     
     print(f"Train augmented dataset: {len(train_aug_ds)} samples")
     print(f"Val augmented dataset: {len(val_aug_ds)} samples")
@@ -251,8 +317,18 @@ def run_augmented_experiment(
     val_t,
     # Augmentation parameters
     flip_p=0.5,
+    vertical_flip_p=0.0,
     rotation_degrees=15,
-    use_color_jitter=True,
+    # Zoom parameters
+    use_random_zoom=False,
+    zoom_scale_range=(0.8, 1.0),
+    # Color augmentation (granular control)
+    brightness_factor=0.0,
+    contrast_factor=0.0,
+    saturation_factor=0.0,
+    hue_factor=0.0,
+    # Legacy color jitter (backward compatible)
+    use_color_jitter=False,
     random_erasing_p=0.2,
     # Training parameters
     num_workers=0,
@@ -271,8 +347,15 @@ def run_augmented_experiment(
         device: torch.device
         val_t: Validation transforms
         flip_p: Probability for horizontal flip
+        vertical_flip_p: Probability for vertical flip
         rotation_degrees: Max rotation angle
-        use_color_jitter: Whether to use color jitter
+        use_random_zoom: Enable random zoom (RandomResizedCrop)
+        zoom_scale_range: Scale range for zoom (e.g., (0.8, 1.0) = 80-100%)
+        brightness_factor: Brightness jitter (0=off, typical: 0.1-0.3)
+        contrast_factor: Contrast jitter (0=off, typical: 0.1-0.3)
+        saturation_factor: Saturation jitter (0=off, typical: 0.1-0.3)
+        hue_factor: Hue jitter (0=off, typical: 0.05-0.1)
+        use_color_jitter: Legacy parameter (uses default ColorJitter if True)
         random_erasing_p: Probability for random erasing
         num_workers: Number of DataLoader workers (0 for Windows notebooks)
         save_submission: Whether to save submission CSV
@@ -291,14 +374,23 @@ def run_augmented_experiment(
     print("\n" + "=" * 60)
     print("STEP 2: Creating augmentation pipeline")
     print("=" * 60)
-    color_jitter_params = (
-        {"brightness": 0.2, "contrast": 0.2, "saturation": 0.2, "hue": 0.1}
-        if use_color_jitter
-        else None
-    )
+    
+    # Legacy color_jitter handling
+    color_jitter_params = None
+    if use_color_jitter:
+        color_jitter_params = {"brightness": 0.2, "contrast": 0.2, "saturation": 0.2, "hue": 0.1}
+    
     train_transform = create_augmentation_transforms(
         flip_p=flip_p,
+        vertical_flip_p=vertical_flip_p,
         rotation_degrees=rotation_degrees,
+        use_random_zoom=use_random_zoom,
+        zoom_scale_range=zoom_scale_range,
+        img_size=cfg.img_size,
+        brightness_factor=brightness_factor,
+        contrast_factor=contrast_factor,
+        saturation_factor=saturation_factor,
+        hue_factor=hue_factor,
         color_jitter_params=color_jitter_params,
         random_erasing_p=random_erasing_p,
     )
