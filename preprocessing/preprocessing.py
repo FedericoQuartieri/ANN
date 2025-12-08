@@ -17,10 +17,14 @@ REMOVE_SHREK = True   # Remove Shrek-contaminated images
 FIX_STAINED = True    # Fix green-stained images using background color
 SPLIT_DOUBLES = True  # Split double images into two separate images
 REMOVE_BLACK_RECT = True  # Remove black rectangles from images
+CROP_TO_MASK = False  # Crop images to mask bounding box (removes empty background)
 RESIZE_AND_NORMALIZE = True  # Resize images and apply normalization/contrast enhancement
 
+# Crop to mask settings
+CROP_PADDING = 10  # Padding around mask bounding box in pixels
+
 # Resize and normalization settings
-TARGET_SIZE = 1024  # Target size for resizing (will be TARGET_SIZE x TARGET_SIZE)
+TARGET_SIZE = 384  # Target size for resizing (will be TARGET_SIZE x TARGET_SIZE)
 APPLY_CLAHE = True  # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
 CLAHE_CLIP_LIMIT = 2.0  # CLAHE clip limit
 CLAHE_TILE_GRID_SIZE = (8, 8)  # CLAHE tile grid size
@@ -333,6 +337,51 @@ def remove_black_rectangle(image):
     # If no good region found, return original
     return image
 
+def crop_to_mask_bounding_box(image, mask, padding=10):
+    """
+    Crop image and mask to the bounding box of the mask's non-zero region
+    
+    Args:
+        image: BGR image (numpy array)
+        mask: Grayscale mask (numpy array)
+        padding: Additional padding around the bounding box (default: 10 pixels)
+    
+    Returns:
+        Tuple of (cropped_image, cropped_mask) or None if mask has no non-zero pixels
+    """
+    # Check if mask has any non-zero pixels
+    if not np.any(mask > 0):
+        return None
+    
+    # Find all non-zero points in the mask
+    coords = cv2.findNonZero(mask)
+    
+    if coords is None or len(coords) == 0:
+        return None
+    
+    # Get bounding box
+    x, y, w, h = cv2.boundingRect(coords)
+    
+    # Add padding
+    x1 = max(0, x - padding)
+    y1 = max(0, y - padding)
+    x2 = min(image.shape[1], x + w + padding)
+    y2 = min(image.shape[0], y + h + padding)
+    
+    # Ensure we have valid dimensions
+    if x2 <= x1 or y2 <= y1:
+        return None
+    
+    # Crop both image and mask
+    cropped_image = image[y1:y2, x1:x2].copy()
+    cropped_mask = mask[y1:y2, x1:x2].copy()
+    
+    # Final validation
+    if cropped_image.size == 0 or cropped_mask.size == 0:
+        return None
+    
+    return cropped_image, cropped_mask
+
 def resize_and_normalize_image(image, mask, target_size=1024, apply_clahe=True, 
                                 clip_limit=2.0, tile_grid_size=(8, 8)):
     """
@@ -361,35 +410,44 @@ def resize_and_normalize_image(image, mask, target_size=1024, apply_clahe=True,
     resized_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
     resized_mask = cv2.resize(mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
     
-    # Calculate background color from border pixels (before CLAHE to get original color)
-    border_thickness = 10
-    border_pixels = []
-    # Top and bottom edges
-    border_pixels.append(resized_image[:border_thickness, :].reshape(-1, 3))
-    border_pixels.append(resized_image[-border_thickness:, :].reshape(-1, 3))
-    # Left and right edges
-    border_pixels.append(resized_image[:, :border_thickness].reshape(-1, 3))
-    border_pixels.append(resized_image[:, -border_thickness:].reshape(-1, 3))
+    # Smart background color detection - find the most common light color
+    # Sample from corners and edges, but filter out dark colors and extreme colors
+    border_thickness = 30
+    corner_samples = []
     
-    # Concatenate all border pixels and get median
-    all_border_pixels = np.vstack(border_pixels)
-    bg_color = np.median(all_border_pixels, axis=0).astype(np.uint8)
+    # Sample from all four corners (more representative of true background)
+    corner_size = min(border_thickness, min(new_h, new_w) // 4)
+    corner_samples.append(resized_image[:corner_size, :corner_size].reshape(-1, 3))  # Top-left
+    corner_samples.append(resized_image[:corner_size, -corner_size:].reshape(-1, 3))  # Top-right
+    corner_samples.append(resized_image[-corner_size:, :corner_size].reshape(-1, 3))  # Bottom-left
+    corner_samples.append(resized_image[-corner_size:, -corner_size:].reshape(-1, 3))  # Bottom-right
     
-    # Apply CLAHE for contrast enhancement if requested (BEFORE padding)
-    if apply_clahe:
-        # Convert to LAB color space
-        lab = cv2.cvtColor(resized_image, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        
-        # Apply CLAHE to L channel
-        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-        l_clahe = clahe.apply(l)
-        
-        # Merge channels and convert back to BGR
-        lab_clahe = cv2.merge([l_clahe, a, b])
-        resized_image = cv2.cvtColor(lab_clahe, cv2.COLOR_LAB2BGR)
+    all_corner_pixels = np.vstack(corner_samples)
     
-    # Create canvas with uniform background color
+    # Convert to grayscale to check brightness
+    gray_corners = cv2.cvtColor(all_corner_pixels.reshape(1, -1, 3), cv2.COLOR_BGR2GRAY).flatten()
+    
+    # Filter: keep only pixels that are relatively bright (likely background, not tissue/artifacts)
+    # Histopathology backgrounds are typically light (>150 in grayscale)
+    bright_mask = gray_corners > 150
+    
+    if np.sum(bright_mask) > 100:  # If we have enough bright pixels
+        # Use only bright pixels for background color
+        bright_pixels = all_corner_pixels[bright_mask]
+        bg_color = np.round(np.median(bright_pixels, axis=0)).astype(np.uint8)
+    else:
+        # Fallback: use the brightest pixels available
+        brightness_threshold = np.percentile(gray_corners, 75)  # Top 25% brightest
+        bright_mask = gray_corners >= brightness_threshold
+        bright_pixels = all_corner_pixels[bright_mask]
+        bg_color = np.round(np.median(bright_pixels, axis=0)).astype(np.uint8)
+    
+    # Additional safety: ensure background is not too dark or too saturated
+    # If detected color is too dark, default to light gray
+    if np.mean(bg_color) < 100:  # Too dark
+        bg_color = np.array([240, 240, 240], dtype=np.uint8)  # Light gray default
+    
+    # Create canvas with uniform background color BEFORE applying CLAHE
     canvas_image = np.full((target_size, target_size, 3), bg_color, dtype=np.uint8)
     canvas_mask = np.zeros((target_size, target_size), dtype=np.uint8)
     
@@ -397,9 +455,36 @@ def resize_and_normalize_image(image, mask, target_size=1024, apply_clahe=True,
     pad_top = (target_size - new_h) // 2
     pad_left = (target_size - new_w) // 2
     
-    # Place resized image and mask on canvas
+    # Place resized image and mask on canvas BEFORE CLAHE
     canvas_image[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = resized_image
     canvas_mask[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = resized_mask
+    
+    # Apply CLAHE only to the tissue region (not the padding) to avoid tile artifacts
+    if apply_clahe:
+        # Create a mask for the tissue region (non-background area)
+        tissue_region_mask = np.zeros((target_size, target_size), dtype=np.uint8)
+        tissue_region_mask[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = 255
+        
+        # Convert to LAB color space
+        lab = cv2.cvtColor(canvas_image, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        
+        # Apply CLAHE to L channel
+        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+        l_clahe = clahe.apply(l)
+        
+        # Only apply CLAHE to tissue region, keep background unchanged
+        l_final = l.copy()
+        l_final[tissue_region_mask > 0] = l_clahe[tissue_region_mask > 0]
+        
+        # Merge channels and convert back to BGR
+        lab_final = cv2.merge([l_final, a, b])
+        canvas_image = cv2.cvtColor(lab_final, cv2.COLOR_LAB2BGR)
+        
+        # Ensure background remains perfectly uniform by re-filling it
+        # This eliminates any artifacts from CLAHE bleeding into padding areas
+        background_mask = tissue_region_mask == 0
+        canvas_image[background_mask] = bg_color
     
     return canvas_image, canvas_mask
 
@@ -712,8 +797,75 @@ def preprocess_dataset():
     if REMOVE_BLACK_RECT and cropped_blacks > 0:
         print(f"✓ Removed black rectangles from {cropped_blacks} images")
     
+    if missing_files:
+        print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
+    
     # ========================================================================
-    # STEP 3a: Resize and normalize all images
+    # STEP 3a: Crop images to mask bounding box
+    # ========================================================================
+    if CROP_TO_MASK:
+        print_section("Cropping Images to Mask Bounding Box")
+        print(f"Padding: {CROP_PADDING} pixels")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images for cropping...")
+        cropped_count = 0
+        discarded_count = 0
+        discarded_files = []
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read image and mask
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    # Crop to mask bounding box
+                    crop_result = crop_to_mask_bounding_box(image, mask, padding=CROP_PADDING)
+                    
+                    if crop_result is None:
+                        # Mask has no non-zero pixels, discard this image
+                        discarded_files.append(img_name)
+                        img_path.unlink()  # Delete image
+                        mask_path.unlink()  # Delete mask
+                        discarded_count += 1
+                        continue
+                    
+                    cropped_image, cropped_mask = crop_result
+                    
+                    # Validate cropped images are not empty
+                    if cropped_image.size == 0 or cropped_mask.size == 0:
+                        discarded_files.append(img_name)
+                        img_path.unlink()  # Delete image
+                        mask_path.unlink()  # Delete mask
+                        discarded_count += 1
+                        continue
+                    
+                    # Overwrite with cropped versions
+                    cv2.imwrite(str(img_path), cropped_image)
+                    cv2.imwrite(str(mask_path), cropped_mask)
+                    cropped_count += 1
+        
+        print(f"\n✓ Cropped {cropped_count} images to mask bounding boxes")
+        if discarded_count > 0:
+            print(f"✓ Discarded {discarded_count} images with empty masks")
+        
+        # Remove discarded images from DataFrame
+        if discarded_files:
+            df_filtered = df_filtered[~df_filtered['sample_index'].isin(discarded_files)].copy()
+            print(f"✓ Removed {len(discarded_files)} images with empty masks from labels")
+    
+    # ========================================================================
+    # STEP 3b: Resize and normalize all images
     # ========================================================================
     if RESIZE_AND_NORMALIZE:
         print_section("Resizing and Normalizing Images")
@@ -757,24 +909,6 @@ def preprocess_dataset():
         print(f"\n✓ Resized and normalized {resized_count} image-mask pairs")
         if APPLY_CLAHE:
             print(f"✓ Applied CLAHE contrast enhancement (clip={CLAHE_CLIP_LIMIT}, grid={CLAHE_TILE_GRID_SIZE})")
-    
-    if missing_files:
-        print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
-    
-    # ========================================================================
-    # STEP 3b: Update DataFrame for split double images
-    # ========================================================================
-    if SPLIT_DOUBLES and split_doubles > 0:
-        print_section("Updating Labels for Split Images")
-        
-        # Double images keep their original names (just cropped to valid region)
-        # No need to modify the DataFrame since names remain the same
-        print(f"✓ Processed {split_doubles} double images (kept non-black mask regions)")
-        print(f"✓ Dataset size unchanged: {len(df_filtered)} images")
-    
-    # ========================================================================
-    # STEP 4: Verify exclusions
-    # ========================================================================
     print_section("Verification")
     
     # Check that excluded images are NOT in output
@@ -829,6 +963,8 @@ def preprocess_dataset():
         print(f"  - Doubles: {split_doubles} images cropped to valid region (kept non-black masks)")
     if REMOVE_BLACK_RECT and cropped_blacks > 0:
         print(f"  - Black rectangles: {cropped_blacks} images cropped")
+    if CROP_TO_MASK:
+        print(f"  - Cropped: Images cropped to mask bounding boxes (padding={CROP_PADDING}px)")
     if RESIZE_AND_NORMALIZE:
         print(f"  - Resized: All images normalized to {TARGET_SIZE}x{TARGET_SIZE}")
         if APPLY_CLAHE:
@@ -944,7 +1080,63 @@ def preprocess_test_dataset():
         print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
     
     # ========================================================================
-    # STEP 3: Resize and normalize all images
+    # STEP 2a: Crop images to mask bounding box
+    # ========================================================================
+    if CROP_TO_MASK:
+        print_section("Cropping Images to Mask Bounding Box")
+        print(f"Padding: {CROP_PADDING} pixels")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images for cropping...")
+        cropped_count = 0
+        discarded_count = 0
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_TEST_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read image and mask
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    # Crop to mask bounding box
+                    crop_result = crop_to_mask_bounding_box(image, mask, padding=CROP_PADDING)
+                    
+                    if crop_result is None:
+                        # Mask has no non-zero pixels, discard this image
+                        img_path.unlink()  # Delete image
+                        mask_path.unlink()  # Delete mask
+                        discarded_count += 1
+                        continue
+                    
+                    cropped_image, cropped_mask = crop_result
+                    
+                    # Validate cropped images are not empty
+                    if cropped_image.size == 0 or cropped_mask.size == 0:
+                        img_path.unlink()  # Delete image
+                        mask_path.unlink()  # Delete mask
+                        discarded_count += 1
+                        continue
+                    
+                    # Overwrite with cropped versions
+                    cv2.imwrite(str(img_path), cropped_image)
+                    cv2.imwrite(str(mask_path), cropped_mask)
+                    cropped_count += 1
+        
+        print(f"\n✓ Cropped {cropped_count} images to mask bounding boxes")
+        if discarded_count > 0:
+            print(f"✓ Discarded {discarded_count} test images with empty masks")
+    
+    # ========================================================================
+    # STEP 2b: Resize and normalize all images
     # ========================================================================
     if RESIZE_AND_NORMALIZE:
         print_section("Resizing and Normalizing Images")
@@ -998,6 +1190,8 @@ def preprocess_test_dataset():
     print("\nPreprocessing steps applied:")
     if SPLIT_DOUBLES and split_doubles > 0:
         print(f"  - Doubles: {split_doubles} images cropped to valid region (kept non-black masks)")
+    if CROP_TO_MASK:
+        print(f"  - Cropped: Images cropped to mask bounding boxes (padding={CROP_PADDING}px)")
     if RESIZE_AND_NORMALIZE:
         print(f"  - Resized: All images normalized to {TARGET_SIZE}x{TARGET_SIZE}")
         if APPLY_CLAHE:

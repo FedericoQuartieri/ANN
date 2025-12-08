@@ -34,8 +34,10 @@ img_0346.png
 img_0371.png
 img_0376.png
 img_0390.png
+img_0393.png
 img_0410.png
 img_0415.png
+img_0424.png
 img_0443.png
 img_0459.png
 img_0498.png
