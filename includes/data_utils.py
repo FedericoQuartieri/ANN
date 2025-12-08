@@ -206,53 +206,26 @@ class DoctogresTestDataset(Dataset):
             img = self.transform(img)
 
         return img, fname
-
+    
+    
 def get_transforms(cfg: TrainingConfig):
-    """Return train and validation transforms based on the config.
+    """Return train and validation transforms.
 
-    The augmentation behavior is controlled by cfg.augmentation:
-    - "none":  same pipeline as validation
-    - "light": weaker augmentation
-    - "strong": current strong augmentation (default)
+    Heavy augmentation is now handled offline in preprocessing.
+    Here we only resize + center-crop + normalize.
     """
     imagenet_mean = [0.485, 0.456, 0.406]
     imagenet_std = [0.229, 0.224, 0.225]
 
-    # Validation / test transform (always deterministic)
-    val_transform = transforms.Compose([
+    base_transform = transforms.Compose([
         transforms.Resize(cfg.img_size + 32),
         transforms.CenterCrop(cfg.img_size),
         transforms.ToTensor(),
         transforms.Normalize(mean=imagenet_mean, std=imagenet_std),
     ])
 
-    # Read augmentation mode from config; default to "strong"
-    aug_mode = getattr(cfg, "augmentation", "strong")
-
-    if aug_mode == "none":
-        # No augmentation: same as validation
-        train_transform = val_transform
-
-    elif aug_mode == "light":
-        # Light augmentation
-        train_transform = transforms.Compose([
-            transforms.Resize(cfg.img_size + 32),
-            transforms.RandomCrop(cfg.img_size),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=imagenet_mean, std=imagenet_std),
-        ])
-
-    else:
-        # "strong" or unknown -> keep the original strong augmentation
-        train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(cfg.img_size, scale=(0.6, 1.0)),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomVerticalFlip(),
-            transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=imagenet_mean, std=imagenet_std),
-        ])
+    train_transform = base_transform
+    val_transform = base_transform
 
     return train_transform, val_transform
 

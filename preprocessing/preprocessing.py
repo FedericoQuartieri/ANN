@@ -17,9 +17,11 @@ REMOVE_SHREK = True   # Remove Shrek-contaminated images
 FIX_STAINED = True    # Fix green-stained images using background color
 SPLIT_DOUBLES = True  # Split double images into two separate images
 REMOVE_BLACK_RECT = True  # Remove black rectangles from images
-CROP_TO_MASK = False  # Crop images to mask bounding box (removes empty background), can be a problem with padding
+CROP_TO_MASK = False  # Crop images to mask bounding box (may remove padding)
 RESIZE_AND_NORMALIZE = True  # Resize images and apply normalization/contrast enhancement
-DATA_AUGMENTATION = True  # Apply data augmentation (rotation, flipping) - TRAINING SET ONLY
+
+# Master switch for offline data augmentation (TRAINING SET ONLY)
+DATA_AUGMENTATION = True
 
 # Crop to mask settings
 CROP_PADDING = 10  # Padding around mask bounding box in pixels
@@ -30,9 +32,30 @@ APPLY_CLAHE = True  # Apply CLAHE (Contrast Limited Adaptive Histogram Equalizat
 CLAHE_CLIP_LIMIT = 3.0  # CLAHE clip limit (increased from 2.0 for better contrast)
 CLAHE_TILE_GRID_SIZE = (8, 8)  # CLAHE tile grid size
 
-# Data augmentation settings (applied to training set only)
+# ---------------------------------------------------------------------------
+# Data augmentation settings (TRAINING SET ONLY) - OFFLINE DATASET CREATION
+# ---------------------------------------------------------------------------
+
+# High-level augmentation mode:
+#   "none"   -> no augmented images
+#   "basic"  -> only fixed rotations / flips (old behaviour)
+#   "strong" -> strong augment (rotation jitter, zoom, color jitter, erasing)
+AUGMENTATION_MODE = "strong"  # "none", "basic", "strong"
+
+# Basic augmentation settings (used when AUGMENTATION_MODE in {"basic", "strong"})
 AUGMENT_ROTATIONS = [90, 180, 270]  # Rotation angles in degrees
-AUGMENT_FLIPS = []  # Flip types to apply ['horizontal', 'vertical']
+AUGMENT_FLIPS = []  # Flip types: e.g. ["horizontal", "vertical"]
+
+# Strong augmentation hyperparameters (offline version of the notebook AUG_PARAMS)
+STRONG_AUG_MULTIPLIER = 1          # How many strong aug samples per original image
+STRONG_ROTATION_DEGREES = 15       # Max absolute rotation angle for jitter
+STRONG_ZOOM_SCALE_RANGE = (0.8, 1.0)  # Random zoom scale range (like RandomResizedCrop)
+STRONG_BRIGHTNESS_JITTER = 0.2     # Brightness jitter (0 = off)
+STRONG_CONTRAST_JITTER = 0.2       # Contrast jitter (0 = off)
+STRONG_SATURATION_JITTER = 0.2     # Saturation jitter (0 = off)
+STRONG_HUE_JITTER = 0.05           # Hue jitter (0 = off)
+STRONG_RANDOM_ERASING_P = 0.1      # Probability of random erasing
+
 
 # ============================================================================
 # PATHS
@@ -530,6 +553,109 @@ def augment_image(image, mask, rotation=None, flip=None):
     
     return aug_image, aug_mask
 
+
+def strong_augment_image(image, mask):
+    """
+    Strong augmentation inspired by the notebook AUG_PARAMS:
+    - small random rotation
+    - random zoom & crop
+    - random horizontal / vertical flips
+    - color jitter (brightness, saturation, hue)
+    - random erasing
+
+    Args:
+        image: BGR image (numpy array)
+        mask: Grayscale mask (numpy array)
+
+    Returns:
+        Tuple of (augmented_image, augmented_mask)
+    """
+    h, w = image.shape[:2]
+
+    # --- 1) Random small rotation ---
+    angle = np.random.uniform(-STRONG_ROTATION_DEGREES, STRONG_ROTATION_DEGREES)
+    center = (w / 2.0, h / 2.0)
+
+    rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
+    aug_image = cv2.warpAffine(
+        image, rot_mat, (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT_101,
+    )
+    aug_mask = cv2.warpAffine(
+        mask, rot_mat, (w, h),
+        flags=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+
+    # --- 2) Random zoom & crop (like RandomResizedCrop) ---
+    scale = np.random.uniform(STRONG_ZOOM_SCALE_RANGE[0], STRONG_ZOOM_SCALE_RANGE[1])
+    if scale < 1.0:
+        new_h = int(h * scale)
+        new_w = int(w * scale)
+
+        top = np.random.randint(0, h - new_h + 1)
+        left = np.random.randint(0, w - new_w + 1)
+
+        crop_img = aug_image[top:top + new_h, left:left + new_w]
+        crop_mask = aug_mask[top:top + new_h, left:left + new_w]
+
+        aug_image = cv2.resize(crop_img, (w, h), interpolation=cv2.INTER_LINEAR)
+        aug_mask = cv2.resize(crop_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    # --- 3) Random flips ---
+    # Horizontal flip with p ~ 0.5
+    if np.random.rand() < 0.5:
+        aug_image = cv2.flip(aug_image, 1)
+        aug_mask = cv2.flip(aug_mask, 1)
+    # Vertical flip with p ~ 0.3
+    if np.random.rand() < 0.3:
+        aug_image = cv2.flip(aug_image, 0)
+        aug_mask = cv2.flip(aug_mask, 0)
+
+    # --- 4) Color jitter in HSV space ---
+    hsv = cv2.cvtColor(aug_image, cv2.COLOR_BGR2HSV).astype(np.float32)
+    h_ch, s_ch, v_ch = cv2.split(hsv)
+
+    # Brightness jitter (V channel)
+    if STRONG_BRIGHTNESS_JITTER > 0:
+        bf = 1.0 + np.random.uniform(-STRONG_BRIGHTNESS_JITTER, STRONG_BRIGHTNESS_JITTER)
+        v_ch *= bf
+
+    # Saturation jitter (S channel)
+    if STRONG_SATURATION_JITTER > 0:
+        sf = 1.0 + np.random.uniform(-STRONG_SATURATION_JITTER, STRONG_SATURATION_JITTER)
+        s_ch *= sf
+
+    # Hue jitter (H channel, range 0-180 in OpenCV)
+    if STRONG_HUE_JITTER > 0:
+        hf = np.random.uniform(-STRONG_HUE_JITTER, STRONG_HUE_JITTER) * 180.0
+        h_ch = (h_ch + hf) % 180.0
+
+    # Clip and merge
+    v_ch = np.clip(v_ch, 0, 255)
+    s_ch = np.clip(s_ch, 0, 255)
+    hsv = cv2.merge([h_ch, s_ch, v_ch])
+    aug_image = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+    # --- 5) Random erasing (rectangular occlusion) ---
+    if STRONG_RANDOM_ERASING_P > 0 and np.random.rand() < STRONG_RANDOM_ERASING_P:
+        erase_h = int(h * np.random.uniform(0.1, 0.3))
+        erase_w = int(w * np.random.uniform(0.1, 0.3))
+        top = np.random.randint(0, h - erase_h + 1)
+        left = np.random.randint(0, w - erase_w + 1)
+
+        # Use approximate background color (median)
+        bg_color = np.median(aug_image.reshape(-1, 3), axis=0).astype(np.uint8)
+
+        aug_image[top:top + erase_h, left:left + erase_w] = bg_color
+        # On the mask we simply erase (set to background)
+        aug_mask[top:top + erase_h, left:left + erase_w] = 0
+
+    return aug_image, aug_mask
+
+
 def detect_green_stain(image):
     """
     Detect green stain in image using HSV color thresholding
@@ -951,100 +1077,130 @@ def preprocess_dataset():
         print(f"\n✓ Resized and normalized {resized_count} image-mask pairs")
         if APPLY_CLAHE:
             print(f"✓ Applied CLAHE contrast enhancement (clip={CLAHE_CLIP_LIMIT}, grid={CLAHE_TILE_GRID_SIZE})")
-    
-    # ========================================================================
+        # ========================================================================
     # STEP 4: Data Augmentation (Training Set Only)
     # ========================================================================
     if DATA_AUGMENTATION:
         print_section("Data Augmentation")
-        print(f"Rotations: {AUGMENT_ROTATIONS}°")
-        print(f"Flips: {AUGMENT_FLIPS}")
-        
-        # Get all current image files
-        original_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
-        original_count = len(original_images)
-        
-        print(f"\nOriginal dataset size: {original_count} images")
-        print(f"Generating augmented images...")
-        
-        augmented_rows = []  # Store new rows for DataFrame
-        augmented_count = 0
-        
-        for idx, img_path in enumerate(original_images, 1):
-            if idx % 100 == 0:
-                print(f"  Progress: {idx}/{original_count}")
-            
-            img_name = img_path.name
-            mask_name = get_mask_filename(img_name)
-            mask_path = PP_DATA_DIR / mask_name
-            
-            # Get original sample info from DataFrame
-            sample_row = df_filtered[df_filtered['sample_index'] == img_name]
-            if len(sample_row) == 0:
-                continue
-            
-            original_label = sample_row.iloc[0]['label']
-            
-            # Read original image and mask
-            image = cv2.imread(str(img_path))
-            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-            
-            if image is None or mask is None:
-                continue
-            
-            # Generate augmentations
-            # Rotations
-            for rotation in AUGMENT_ROTATIONS:
-                aug_image, aug_mask = augment_image(image, mask, rotation=rotation, flip=None)
-                
-                # Save augmented image and mask
-                base_name = img_name.replace('img_', '').replace('.png', '')
-                aug_img_name = f"img_{base_name}_rot{rotation}.png"
-                aug_mask_name = f"mask_{base_name}_rot{rotation}.png"
-                
-                cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
-                cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
-                
-                # Add to DataFrame
-                augmented_rows.append({
-                    'sample_index': aug_img_name,
-                    'label': original_label
-                })
-                augmented_count += 1
-            
-            # Flips
-            for flip in AUGMENT_FLIPS:
-                aug_image, aug_mask = augment_image(image, mask, rotation=None, flip=flip)
-                
-                # Save augmented image and mask
-                base_name = img_name.replace('img_', '').replace('.png', '')
-                aug_img_name = f"img_{base_name}_{flip}.png"
-                aug_mask_name = f"mask_{base_name}_{flip}.png"
-                
-                cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
-                cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
-                
-                # Add to DataFrame
-                augmented_rows.append({
-                    'sample_index': aug_img_name,
-                    'label': original_label
-                })
-                augmented_count += 1
-        
-        # Add augmented samples to DataFrame
-        if augmented_rows:
-            df_augmented = pd.DataFrame(augmented_rows)
-            df_filtered = pd.concat([df_filtered, df_augmented], ignore_index=True)
-        
-        final_count = original_count + augmented_count
-        if original_count > 0:
-            augmentation_factor = final_count / original_count
+        print(f"Mode: {AUGMENTATION_MODE}")
+
+        if AUGMENTATION_MODE == "none":
+            print("AUGMENTATION_MODE='none' -> no augmented images will be generated.")
         else:
-            augmentation_factor = 0
-        
-        print(f"\n✓ Generated {augmented_count} augmented images")
-        print(f"✓ Total dataset size: {final_count} images ({augmentation_factor:.1f}x augmentation)")
-    
+            if AUGMENTATION_MODE in {"basic", "strong"}:
+                print(f"Basic rotations: {AUGMENT_ROTATIONS}°")
+                print(f"Basic flips    : {AUGMENT_FLIPS}")
+            if AUGMENTATION_MODE == "strong":
+                print(f"Strong aug copies per image: {STRONG_AUG_MULTIPLIER}")
+                print(f"Rotation jitter (±deg): {STRONG_ROTATION_DEGREES}")
+                print(f"Zoom scale range      : {STRONG_ZOOM_SCALE_RANGE}")
+                print(f"Brightness jitter     : {STRONG_BRIGHTNESS_JITTER}")
+                print(f"Contrast jitter       : {STRONG_CONTRAST_JITTER}")
+                print(f"Saturation jitter     : {STRONG_SATURATION_JITTER}")
+                print(f"Hue jitter            : {STRONG_HUE_JITTER}")
+                print(f"Random erasing p      : {STRONG_RANDOM_ERASING_P}")
+
+            # Get all current preprocessed image files
+            original_images = sorted(
+                [f for f in PP_DATA_DIR.iterdir() if f.name.startswith("img_")]
+            )
+            original_count = len(original_images)
+
+            print(f"\nOriginal dataset size: {original_count} images")
+            print("Generating augmented images...")
+
+            augmented_rows = []  # New rows for DataFrame
+            augmented_count = 0
+
+            for idx, img_path in enumerate(original_images, 1):
+                if idx % 100 == 0:
+                    print(f"  Progress: {idx}/{original_count}")
+
+                img_name = img_path.name
+                mask_name = get_mask_filename(img_name)
+                mask_path = PP_DATA_DIR / mask_name
+
+                if not img_path.exists() or not mask_path.exists():
+                    continue
+
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+
+                if image is None or mask is None:
+                    continue
+
+                # Get label for this image from df_filtered
+                row = df_filtered[df_filtered["sample_index"] == img_name]
+                if row.empty:
+                    continue
+                original_label = row["label"].iloc[0]
+
+                base_name = img_name.replace("img_", "").replace(".png", "")
+
+                # ---- BASIC ROTATIONS / FLIPS (old behaviour) ----
+                if AUGMENTATION_MODE in {"basic", "strong"}:
+                    for rotation in AUGMENT_ROTATIONS:
+                        aug_image, aug_mask = augment_image(
+                            image, mask, rotation=rotation, flip=None
+                        )
+
+                        aug_img_name = f"img_{base_name}_rot{rotation}.png"
+                        aug_mask_name = f"mask_{base_name}_rot{rotation}.png"
+
+                        cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
+                        cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
+
+                        augmented_rows.append(
+                            {"sample_index": aug_img_name, "label": original_label}
+                        )
+                        augmented_count += 1
+
+                    for flip in AUGMENT_FLIPS:
+                        aug_image, aug_mask = augment_image(
+                            image, mask, rotation=None, flip=flip
+                        )
+
+                        aug_img_name = f"img_{base_name}_{flip}.png"
+                        aug_mask_name = f"mask_{base_name}_{flip}.png"
+
+                        cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
+                        cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
+
+                        augmented_rows.append(
+                            {"sample_index": aug_img_name, "label": original_label}
+                        )
+                        augmented_count += 1
+
+                # ---- STRONG AUGMENTATION (nuova) ----
+                if AUGMENTATION_MODE == "strong":
+                    for k in range(STRONG_AUG_MULTIPLIER):
+                        aug_image, aug_mask = strong_augment_image(image, mask)
+
+                        aug_img_name = f"img_{base_name}_strong{k}.png"
+                        aug_mask_name = f"mask_{base_name}_strong{k}.png"
+
+                        cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
+                        cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
+
+                        augmented_rows.append(
+                            {"sample_index": aug_img_name, "label": original_label}
+                        )
+                        augmented_count += 1
+
+            # Add augmented samples to DataFrame
+            if augmented_rows:
+                df_augmented = pd.DataFrame(augmented_rows)
+                df_filtered = pd.concat([df_filtered, df_augmented], ignore_index=True)
+
+            final_count = original_count + augmented_count
+            augmentation_factor = final_count / original_count if original_count > 0 else 0
+
+            print(f"\n✓ Generated {augmented_count} augmented images")
+            print(f"✓ Total dataset size: {final_count} images ({augmentation_factor:.1f}x augmentation)")
+    else:
+        print_section("Data Augmentation")
+        print("DATA_AUGMENTATION=False -> skipping augmentation step.")
+
     # ========================================================================
     # STEP 5: Verification
     # ========================================================================
