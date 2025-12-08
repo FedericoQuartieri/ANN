@@ -9,3 +9,5 @@ data/
 local_lib/
 .vscode/
 configs/
+old_models/
+Colab_augmentation_and_image_retrival.ipynb
