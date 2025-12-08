@@ -14,9 +14,9 @@ class TrainingConfig:
     data_dir: str = "data"
     out_dir: str = "out"
 
-    train_img_dir: str = "train_data"
+    train_img_dir: str = "pp_train_data"
     test_img_dir: str = "test_data"
-    labels_csv: str = "train_labels.csv"
+    labels_csv: str = "pp_train_labels.csv"
     mask_dir: Optional[str] = None
 
     # ---- DATA SPLIT ----
@@ -25,7 +25,7 @@ class TrainingConfig:
 
 
 # cv_type: ["holdout", "kfold"]
-# 
+# augmentation: ["none", "strong"]
 
 
 GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
@@ -40,12 +40,10 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_scheduler": [True],
         "use_masks": [True, False],
         "mask_mode": ["multiply", "crop_bbox"],
+        "cv_type": ["holdout"],      
+        "n_splits": [5],   
+        "augmentation": ["strong"],  
 
-        # NEW: validation strategy
-        # "holdout" = split singolo (come ora)
-        # "kfold"   = StratifiedKFold
-        "cv_type": ["holdout"],      # oppure ["holdout", "kfold"]
-        "n_splits": [5],             # usato solo se cv_type == "kfold"
     },
 
     "resnet_only": {
@@ -59,9 +57,10 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_scheduler": [True],
         "use_masks": [False],
         "mask_mode": ["crop_bbox"],
-
         "cv_type": ["holdout"],
         "n_splits": [5],
+        "augmentation": ["strong"],  
+
     },
 
     "test": {
@@ -75,8 +74,26 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_scheduler": [True],
         "use_masks": [False],
         "mask_mode": ["crop_bbox"],
-
-        "cv_type": ["kfold"], 
+        "cv_type": ["holdout"], 
         "n_splits": [5],
+        "augmentation": ["strong"],  
     },
+
+
+    "resnet50_img384_augmentation_noshrek": {
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["multiply"],
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "augmentation": ["strong"],
+    },
+
 }
