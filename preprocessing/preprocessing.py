@@ -17,44 +17,35 @@ REMOVE_SHREK = True   # Remove Shrek-contaminated images
 FIX_STAINED = True    # Fix green-stained images using background color
 SPLIT_DOUBLES = True  # Split double images into two separate images
 REMOVE_BLACK_RECT = True  # Remove black rectangles from images
-CROP_TO_MASK = False  # Crop images to mask bounding box (may remove padding)
+PADDING_SQUARE = True  # Pad images to square shape with smart background color
+CROP_TO_MASK = True  # Crop images to mask bounding box (may remove padding)
 RESIZE_AND_NORMALIZE = True  # Resize images and apply normalization/contrast enhancement
+DATA_AUGMENTATION = True  # Apply data augmentation (training set only)
 
-# Master switch for offline data augmentation (TRAINING SET ONLY)
-DATA_AUGMENTATION = True
+# ----------------------------------------------------------------------------
+# PREPROCESSING PARAMETERS
+# ----------------------------------------------------------------------------
 
-# Crop to mask settings
+# CROPPING
 CROP_PADDING = 10  # Padding around mask bounding box in pixels
 
-# Resize and normalization settings
+# RESIZING & NORMALIZATION
 TARGET_SIZE = 384  # Target size for resizing (will be TARGET_SIZE x TARGET_SIZE)
 APPLY_CLAHE = True  # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-CLAHE_CLIP_LIMIT = 3.0  # CLAHE clip limit (increased from 2.0 for better contrast)
-CLAHE_TILE_GRID_SIZE = (8, 8)  # CLAHE tile grid size
+CLAHE_CLIP_LIMIT = 2.0  # CLAHE clip limit - lower = less aggressive, fewer artifacts
+CLAHE_TILE_GRID_SIZE = (16, 16)  # Larger grid = smoother transitions, less tiling pattern
 
-# ---------------------------------------------------------------------------
-# Data augmentation settings (TRAINING SET ONLY) - OFFLINE DATASET CREATION
-# ---------------------------------------------------------------------------
-
-# High-level augmentation mode:
-#   "none"   -> no augmented images
-#   "basic"  -> only fixed rotations / flips (old behaviour)
-#   "strong" -> strong augment (rotation jitter, zoom, color jitter, erasing)
-AUGMENTATION_MODE = "strong"  # "none", "basic", "strong"
-
-# Basic augmentation settings (used when AUGMENTATION_MODE in {"basic", "strong"})
-AUGMENT_ROTATIONS = [90, 180, 270]  # Rotation angles in degrees
-AUGMENT_FLIPS = []  # Flip types: e.g. ["horizontal", "vertical"]
-
-# Strong augmentation hyperparameters (offline version of the notebook AUG_PARAMS)
-STRONG_AUG_MULTIPLIER = 1          # How many strong aug samples per original image
-STRONG_ROTATION_DEGREES = 15       # Max absolute rotation angle for jitter
-STRONG_ZOOM_SCALE_RANGE = (0.8, 1.0)  # Random zoom scale range (like RandomResizedCrop)
-STRONG_BRIGHTNESS_JITTER = 0.2     # Brightness jitter (0 = off)
-STRONG_CONTRAST_JITTER = 0.2       # Contrast jitter (0 = off)
-STRONG_SATURATION_JITTER = 0.2     # Saturation jitter (0 = off)
-STRONG_HUE_JITTER = 0.05           # Hue jitter (0 = off)
-STRONG_RANDOM_ERASING_P = 0.1      # Probability of random erasing
+# AUGMENTATION
+# Optimized for medical histopathology cell classification
+# Dataset: 691 samples, 4 cancer types (imbalanced: 77-220 per class)
+NUM_AUGMENTED_COPIES = 4        # Creates ~3800 total samples (691 * 5.5x) - good balance
+ROTATION_DEGREES = 180          # Full rotation (±180°) - cells have no canonical orientation
+ZOOM_SCALE_RANGE = (0.85, 1.15) # Moderate zoom (85-115%) - simulates different magnifications
+BRIGHTNESS_JITTER = 0.15        # Moderate (±15%) - staining intensity variation
+CONTRAST_JITTER = 0.15          # Moderate (±15%) - scanner/staining differences  
+SATURATION_JITTER = 0.15        # Moderate (±15%) - H&E saturation can vary
+HUE_JITTER = 0.03               # Conservative (±3%) - preserve H&E color meaning
+RANDOM_ERASING_P = 0.05         # Low probability (5%) - simulates artifacts/debris
 
 
 # ============================================================================
@@ -316,15 +307,17 @@ def split_double_image(image_path, mask_path):
         # No valid regions or couldn't determine
         return None
 
-def remove_black_rectangle(image):
+def remove_black_rectangle(image, mask):
     """
-    Remove black/dark rectangle from image by cropping to tissue region only
+    Remove black/dark rectangle from image and mask by cropping to tissue region only
     
     Args:
         image: BGR image (numpy array)
+        mask: Grayscale mask (numpy array)
     
     Returns:
-        Cropped image with black rectangle removed, or original if detection fails
+        Tuple of (cropped_image, cropped_mask) with black rectangle removed,
+        or (original_image, original_mask) if detection fails
     """
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -360,18 +353,23 @@ def remove_black_rectangle(image):
             x2 = min(image.shape[1], x + w + padding)
             y2 = min(image.shape[0], y + h + padding)
             
-            return image[y1:y2, x1:x2]
+            # Crop both image and mask
+            cropped_image = image[y1:y2, x1:x2]
+            cropped_mask = mask[y1:y2, x1:x2]
+            
+            return cropped_image, cropped_mask
     
-    # If no good region found, return original
-    return image
+    # If no good region found, return originals
+    return image, mask
 
 def crop_to_mask_bounding_box(image, mask, padding=10):
     """
     Crop image and mask to the bounding box of the mask's non-zero region
+    while maintaining a square shape
     
     Args:
-        image: BGR image (numpy array)
-        mask: Grayscale mask (numpy array)
+        image: BGR image (numpy array) - should be square
+        mask: Grayscale mask (numpy array) - should be square
         padding: Additional padding around the bounding box (default: 10 pixels)
     
     Returns:
@@ -396,13 +394,37 @@ def crop_to_mask_bounding_box(image, mask, padding=10):
     x2 = min(image.shape[1], x + w + padding)
     y2 = min(image.shape[0], y + h + padding)
     
+    # Calculate crop dimensions
+    crop_w = x2 - x1
+    crop_h = y2 - y1
+    
+    # Make it square by using the larger dimension
+    crop_size = max(crop_w, crop_h)
+    
+    # Calculate center of the bounding box
+    center_x = (x1 + x2) // 2
+    center_y = (y1 + y2) // 2
+    
+    # Calculate new square bounds centered on the bounding box
+    half_size = crop_size // 2
+    x1_square = max(0, center_x - half_size)
+    y1_square = max(0, center_y - half_size)
+    x2_square = min(image.shape[1], x1_square + crop_size)
+    y2_square = min(image.shape[0], y1_square + crop_size)
+    
+    # Adjust if we hit the edge
+    if x2_square - x1_square < crop_size:
+        x1_square = max(0, x2_square - crop_size)
+    if y2_square - y1_square < crop_size:
+        y1_square = max(0, y2_square - crop_size)
+    
     # Ensure we have valid dimensions
-    if x2 <= x1 or y2 <= y1:
+    if x2_square <= x1_square or y2_square <= y1_square:
         return None
     
-    # Crop both image and mask
-    cropped_image = image[y1:y2, x1:x2].copy()
-    cropped_mask = mask[y1:y2, x1:x2].copy()
+    # Crop both image and mask to square
+    cropped_image = image[y1_square:y2_square, x1_square:x2_square].copy()
+    cropped_mask = mask[y1_square:y2_square, x1_square:x2_square].copy()
     
     # Final validation
     if cropped_image.size == 0 or cropped_mask.size == 0:
@@ -410,11 +432,103 @@ def crop_to_mask_bounding_box(image, mask, padding=10):
     
     return cropped_image, cropped_mask
 
-def resize_and_normalize_image(image, mask, target_size=1024, apply_clahe=True, 
-                                clip_limit=2.0, tile_grid_size=(8, 8)):
+def detect_background_color(image):
     """
-    Resize image and mask to target size while maintaining aspect ratio,
-    and apply contrast enhancement via CLAHE
+    Detect background color from image corners using smart sampling
+    
+    Args:
+        image: BGR image (numpy array)
+    
+    Returns:
+        Background color as BGR tuple (numpy array)
+    """
+    h, w = image.shape[:2]
+    border_thickness = 30
+    corner_samples = []
+    
+    # Sample from all four corners
+    corner_size = min(border_thickness, min(h, w) // 4)
+    if corner_size > 0:
+        corner_samples.append(image[:corner_size, :corner_size].reshape(-1, 3))  # Top-left
+        corner_samples.append(image[:corner_size, -corner_size:].reshape(-1, 3))  # Top-right
+        corner_samples.append(image[-corner_size:, :corner_size].reshape(-1, 3))  # Bottom-left
+        corner_samples.append(image[-corner_size:, -corner_size:].reshape(-1, 3))  # Bottom-right
+        
+        all_corner_pixels = np.vstack(corner_samples)
+        
+        # Convert to grayscale to check brightness
+        gray_corners = cv2.cvtColor(all_corner_pixels.reshape(1, -1, 3), cv2.COLOR_BGR2GRAY).flatten()
+        
+        # Filter: keep only pixels that are relatively bright (likely background)
+        # Histopathology backgrounds are typically light (>150 in grayscale)
+        bright_mask = gray_corners > 150
+        
+        if np.sum(bright_mask) > 100:  # If we have enough bright pixels
+            bright_pixels = all_corner_pixels[bright_mask]
+            bg_color = np.round(np.median(bright_pixels, axis=0)).astype(np.uint8)
+        else:
+            # Fallback: use the brightest pixels available
+            brightness_threshold = np.percentile(gray_corners, 75)
+            bright_mask = gray_corners >= brightness_threshold
+            bright_pixels = all_corner_pixels[bright_mask]
+            bg_color = np.round(np.median(bright_pixels, axis=0)).astype(np.uint8)
+    else:
+        # Image too small, use median color
+        bg_color = np.round(np.median(image.reshape(-1, 3), axis=0)).astype(np.uint8)
+    
+    # Safety: ensure background is not too dark
+    if np.mean(bg_color) < 100:
+        bg_color = np.array([240, 240, 240], dtype=np.uint8)
+    
+    return bg_color
+
+def pad_to_square(image, mask):
+    """
+    Pad image and mask to square shape by adding borders (no resizing)
+    Centers the image and adds padding with smart background color
+    
+    Args:
+        image: BGR image (numpy array)
+        mask: Grayscale mask (numpy array)
+    
+    Returns:
+        Tuple of (padded_image, padded_mask)
+    """
+    h, w = image.shape[:2]
+    
+    # Ensure mask is grayscale (2D)
+    if len(mask.shape) == 3:
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+    
+    # Already square, return as is
+    if h == w:
+        return image.copy(), mask.copy()
+    
+    # Determine the target square size (max of height and width)
+    target_size = max(h, w)
+    
+    # Detect background color from the image
+    bg_color = detect_background_color(image)
+    
+    # Create square canvas with background color
+    square_image = np.full((target_size, target_size, 3), bg_color, dtype=np.uint8)
+    square_mask = np.zeros((target_size, target_size), dtype=np.uint8)
+    
+    # Calculate padding to center the image
+    pad_top = (target_size - h) // 2
+    pad_left = (target_size - w) // 2
+    
+    # Place original image and mask on canvas (centered)
+    square_image[pad_top:pad_top+h, pad_left:pad_left+w] = image
+    square_mask[pad_top:pad_top+h, pad_left:pad_left+w] = mask
+    
+    return square_image, square_mask
+
+def resize_and_normalize_image(image, mask, target_size=384, apply_clahe=True, 
+                               clip_limit=3.0, tile_grid_size=(8, 8)):
+    """
+    Resize image and mask to target size with high-quality interpolation
+    and optionally apply adaptive histogram equalization for contrast enhancement
     
     Args:
         image: BGR image (numpy array)
@@ -429,139 +543,38 @@ def resize_and_normalize_image(image, mask, target_size=1024, apply_clahe=True,
     """
     h, w = image.shape[:2]
     
-    # Calculate scaling factor to fit within target size while maintaining aspect ratio
-    scale = min(target_size / w, target_size / h)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
+    # Professional resize with anti-aliasing
+    # INTER_LANCZOS4 provides best quality for both upscaling and downscaling
+    resized_image = cv2.resize(image, (target_size, target_size), interpolation=cv2.INTER_LANCZOS4)
     
-    # Resize image and mask
-    resized_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    resized_mask = cv2.resize(mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    # Mask should use nearest neighbor to preserve label values
+    resized_mask = cv2.resize(mask, (target_size, target_size), interpolation=cv2.INTER_NEAREST)
     
-    # Smart background color detection - find the most common light color
-    # Sample from corners and edges, but filter out dark colors and extreme colors
-    border_thickness = 30
-    corner_samples = []
-    
-    # Sample from all four corners (more representative of true background)
-    corner_size = min(border_thickness, min(new_h, new_w) // 4)
-    corner_samples.append(resized_image[:corner_size, :corner_size].reshape(-1, 3))  # Top-left
-    corner_samples.append(resized_image[:corner_size, -corner_size:].reshape(-1, 3))  # Top-right
-    corner_samples.append(resized_image[-corner_size:, :corner_size].reshape(-1, 3))  # Bottom-left
-    corner_samples.append(resized_image[-corner_size:, -corner_size:].reshape(-1, 3))  # Bottom-right
-    
-    all_corner_pixels = np.vstack(corner_samples)
-    
-    # Convert to grayscale to check brightness
-    gray_corners = cv2.cvtColor(all_corner_pixels.reshape(1, -1, 3), cv2.COLOR_BGR2GRAY).flatten()
-    
-    # Filter: keep only pixels that are relatively bright (likely background, not tissue/artifacts)
-    # Histopathology backgrounds are typically light (>150 in grayscale)
-    bright_mask = gray_corners > 150
-    
-    if np.sum(bright_mask) > 100:  # If we have enough bright pixels
-        # Use only bright pixels for background color
-        bright_pixels = all_corner_pixels[bright_mask]
-        bg_color = np.round(np.median(bright_pixels, axis=0)).astype(np.uint8)
-    else:
-        # Fallback: use the brightest pixels available
-        brightness_threshold = np.percentile(gray_corners, 75)  # Top 25% brightest
-        bright_mask = gray_corners >= brightness_threshold
-        bright_pixels = all_corner_pixels[bright_mask]
-        bg_color = np.round(np.median(bright_pixels, axis=0)).astype(np.uint8)
-    
-    # Additional safety: ensure background is not too dark or too saturated
-    # If detected color is too dark, default to light gray
-    if np.mean(bg_color) < 100:  # Too dark
-        bg_color = np.array([240, 240, 240], dtype=np.uint8)  # Light gray default
-    
-    # Create canvas with uniform background color BEFORE applying CLAHE
-    canvas_image = np.full((target_size, target_size, 3), bg_color, dtype=np.uint8)
-    canvas_mask = np.zeros((target_size, target_size), dtype=np.uint8)
-    
-    # Calculate padding to center the image
-    pad_top = (target_size - new_h) // 2
-    pad_left = (target_size - new_w) // 2
-    
-    # Place resized image and mask on canvas BEFORE CLAHE
-    canvas_image[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = resized_image
-    canvas_mask[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = resized_mask
-    
-    # Apply CLAHE only to the tissue region (not the padding) to avoid tile artifacts
+    # Apply adaptive histogram equalization if requested
     if apply_clahe:
-        # Create a mask for the tissue region (non-background area)
-        tissue_region_mask = np.zeros((target_size, target_size), dtype=np.uint8)
-        tissue_region_mask[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = 255
+        # Convert to LAB color space - perceptually uniform
+        lab = cv2.cvtColor(resized_image, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
         
-        # Convert to LAB color space
-        lab = cv2.cvtColor(canvas_image, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        
-        # Apply CLAHE to L channel
+        # Apply CLAHE only to luminance channel
         clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-        l_clahe = clahe.apply(l)
+        l_clahe = clahe.apply(l_channel)
         
-        # Only apply CLAHE to tissue region, keep background unchanged
-        l_final = l.copy()
-        l_final[tissue_region_mask > 0] = l_clahe[tissue_region_mask > 0]
-        
-        # Merge channels and convert back to BGR
-        lab_final = cv2.merge([l_final, a, b])
-        canvas_image = cv2.cvtColor(lab_final, cv2.COLOR_LAB2BGR)
-        
-        # Ensure background remains perfectly uniform by re-filling it
-        # This eliminates any artifacts from CLAHE bleeding into padding areas
-        background_mask = tissue_region_mask == 0
-        canvas_image[background_mask] = bg_color
+        # Merge and convert back to BGR
+        lab_clahe = cv2.merge([l_clahe, a_channel, b_channel])
+        resized_image = cv2.cvtColor(lab_clahe, cv2.COLOR_LAB2BGR)
     
-    return canvas_image, canvas_mask
-
-def augment_image(image, mask, rotation=None, flip=None):
-    """
-    Apply augmentation to image and mask (rotation and/or flipping)
-    
-    Args:
-        image: BGR image (numpy array)
-        mask: Grayscale mask (numpy array)
-        rotation: Rotation angle in degrees (90, 180, 270) or None
-        flip: Flip type ('horizontal', 'vertical') or None
-    
-    Returns:
-        Tuple of (augmented_image, augmented_mask)
-    """
-    aug_image = image.copy()
-    aug_mask = mask.copy()
-    
-    # Apply rotation
-    if rotation == 90:
-        aug_image = cv2.rotate(aug_image, cv2.ROTATE_90_CLOCKWISE)
-        aug_mask = cv2.rotate(aug_mask, cv2.ROTATE_90_CLOCKWISE)
-    elif rotation == 180:
-        aug_image = cv2.rotate(aug_image, cv2.ROTATE_180)
-        aug_mask = cv2.rotate(aug_mask, cv2.ROTATE_180)
-    elif rotation == 270:
-        aug_image = cv2.rotate(aug_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
-        aug_mask = cv2.rotate(aug_mask, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    
-    # Apply flip
-    if flip == 'horizontal':
-        aug_image = cv2.flip(aug_image, 1)  # 1 = horizontal flip
-        aug_mask = cv2.flip(aug_mask, 1)
-    elif flip == 'vertical':
-        aug_image = cv2.flip(aug_image, 0)  # 0 = vertical flip
-        aug_mask = cv2.flip(aug_mask, 0)
-    
-    return aug_image, aug_mask
+    return resized_image, resized_mask
 
 
-def strong_augment_image(image, mask):
+def apply_augmentation(image, mask):
     """
-    Strong augmentation inspired by the notebook AUG_PARAMS:
-    - small random rotation
-    - random zoom & crop
-    - random horizontal / vertical flips
-    - color jitter (brightness, saturation, hue)
-    - random erasing
+    Apply random augmentation transformations to image and mask:
+    - Small random rotation
+    - Random zoom & crop
+    - Random horizontal / vertical flips
+    - Color jitter (brightness, contrast, saturation, hue)
+    - Random erasing
 
     Args:
         image: BGR image (numpy array)
@@ -573,7 +586,7 @@ def strong_augment_image(image, mask):
     h, w = image.shape[:2]
 
     # --- 1) Random small rotation ---
-    angle = np.random.uniform(-STRONG_ROTATION_DEGREES, STRONG_ROTATION_DEGREES)
+    angle = np.random.uniform(-ROTATION_DEGREES, ROTATION_DEGREES)
     center = (w / 2.0, h / 2.0)
 
     rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
@@ -590,7 +603,7 @@ def strong_augment_image(image, mask):
     )
 
     # --- 2) Random zoom & crop (like RandomResizedCrop) ---
-    scale = np.random.uniform(STRONG_ZOOM_SCALE_RANGE[0], STRONG_ZOOM_SCALE_RANGE[1])
+    scale = np.random.uniform(ZOOM_SCALE_RANGE[0], ZOOM_SCALE_RANGE[1])
     if scale < 1.0:
         new_h = int(h * scale)
         new_w = int(w * scale)
@@ -619,18 +632,18 @@ def strong_augment_image(image, mask):
     h_ch, s_ch, v_ch = cv2.split(hsv)
 
     # Brightness jitter (V channel)
-    if STRONG_BRIGHTNESS_JITTER > 0:
-        bf = 1.0 + np.random.uniform(-STRONG_BRIGHTNESS_JITTER, STRONG_BRIGHTNESS_JITTER)
+    if BRIGHTNESS_JITTER > 0:
+        bf = 1.0 + np.random.uniform(-BRIGHTNESS_JITTER, BRIGHTNESS_JITTER)
         v_ch *= bf
 
     # Saturation jitter (S channel)
-    if STRONG_SATURATION_JITTER > 0:
-        sf = 1.0 + np.random.uniform(-STRONG_SATURATION_JITTER, STRONG_SATURATION_JITTER)
+    if SATURATION_JITTER > 0:
+        sf = 1.0 + np.random.uniform(-SATURATION_JITTER, SATURATION_JITTER)
         s_ch *= sf
 
     # Hue jitter (H channel, range 0-180 in OpenCV)
-    if STRONG_HUE_JITTER > 0:
-        hf = np.random.uniform(-STRONG_HUE_JITTER, STRONG_HUE_JITTER) * 180.0
+    if HUE_JITTER > 0:
+        hf = np.random.uniform(-HUE_JITTER, HUE_JITTER) * 180.0
         h_ch = (h_ch + hf) % 180.0
 
     # Clip and merge
@@ -640,7 +653,7 @@ def strong_augment_image(image, mask):
     aug_image = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
     # --- 5) Random erasing (rectangular occlusion) ---
-    if STRONG_RANDOM_ERASING_P > 0 and np.random.rand() < STRONG_RANDOM_ERASING_P:
+    if RANDOM_ERASING_P > 0 and np.random.rand() < RANDOM_ERASING_P:
         erase_h = int(h * np.random.uniform(0.1, 0.3))
         erase_w = int(w * np.random.uniform(0.1, 0.3))
         top = np.random.randint(0, h - erase_h + 1)
@@ -928,11 +941,7 @@ def preprocess_dataset():
                 
                 if image is not None and mask is not None:
                     # Remove black rectangle from both image and mask
-                    cropped_image = remove_black_rectangle(image)
-                    cropped_mask = remove_black_rectangle(cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR))
-                    
-                    # Convert mask back to grayscale
-                    cropped_mask = cv2.cvtColor(cropped_mask, cv2.COLOR_BGR2GRAY)
+                    cropped_image, cropped_mask = remove_black_rectangle(image, mask)
                     
                     # Save cropped versions
                     cv2.imwrite(str(dst_img), cropped_image)
@@ -969,7 +978,43 @@ def preprocess_dataset():
         print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
     
     # ========================================================================
-    # STEP 3a: Crop images to mask bounding box
+    # STEP 3a: Pad images to square shape
+    # ========================================================================
+    if PADDING_SQUARE:
+        print_section("Padding Images to Square")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images for padding...")
+        padded_count = 0
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read image and mask
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    # Pad to square
+                    padded_image, padded_mask = pad_to_square(image, mask)
+                    
+                    # Overwrite with padded versions
+                    cv2.imwrite(str(img_path), padded_image)
+                    cv2.imwrite(str(mask_path), padded_mask)
+                    padded_count += 1
+        
+        print(f"\n✓ Padded {padded_count} images to square shape")
+    
+    # ========================================================================
+    # STEP 3b: Crop images to mask bounding box
     # ========================================================================
     if CROP_TO_MASK:
         print_section("Cropping Images to Mask Bounding Box")
@@ -1060,7 +1105,7 @@ def preprocess_dataset():
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                 
                 if image is not None and mask is not None:
-                    # Resize and normalize
+                    # Resize image
                     resized_image, resized_mask = resize_and_normalize_image(
                         image, mask, 
                         target_size=TARGET_SIZE,
@@ -1082,121 +1127,77 @@ def preprocess_dataset():
     # ========================================================================
     if DATA_AUGMENTATION:
         print_section("Data Augmentation")
-        print(f"Mode: {AUGMENTATION_MODE}")
+        print(f"Creating {NUM_AUGMENTED_COPIES} augmented copies per image with random transformations")
+        print(f"Rotation jitter (±deg): {ROTATION_DEGREES}")
+        print(f"Zoom scale range      : {ZOOM_SCALE_RANGE}")
+        print(f"Brightness jitter     : {BRIGHTNESS_JITTER}")
+        print(f"Contrast jitter       : {CONTRAST_JITTER}")
+        print(f"Saturation jitter     : {SATURATION_JITTER}")
+        print(f"Hue jitter            : {HUE_JITTER}")
+        print(f"Random erasing prob   : {RANDOM_ERASING_P}")
 
-        if AUGMENTATION_MODE == "none":
-            print("AUGMENTATION_MODE='none' -> no augmented images will be generated.")
-        else:
-            if AUGMENTATION_MODE in {"basic", "strong"}:
-                print(f"Basic rotations: {AUGMENT_ROTATIONS}°")
-                print(f"Basic flips    : {AUGMENT_FLIPS}")
-            if AUGMENTATION_MODE == "strong":
-                print(f"Strong aug copies per image: {STRONG_AUG_MULTIPLIER}")
-                print(f"Rotation jitter (±deg): {STRONG_ROTATION_DEGREES}")
-                print(f"Zoom scale range      : {STRONG_ZOOM_SCALE_RANGE}")
-                print(f"Brightness jitter     : {STRONG_BRIGHTNESS_JITTER}")
-                print(f"Contrast jitter       : {STRONG_CONTRAST_JITTER}")
-                print(f"Saturation jitter     : {STRONG_SATURATION_JITTER}")
-                print(f"Hue jitter            : {STRONG_HUE_JITTER}")
-                print(f"Random erasing p      : {STRONG_RANDOM_ERASING_P}")
+        # Get all current preprocessed image files
+        original_images = sorted(
+            [f for f in PP_DATA_DIR.iterdir() if f.name.startswith("img_")]
+        )
+        original_count = len(original_images)
 
-            # Get all current preprocessed image files
-            original_images = sorted(
-                [f for f in PP_DATA_DIR.iterdir() if f.name.startswith("img_")]
-            )
-            original_count = len(original_images)
+        print(f"\nOriginal dataset size: {original_count} images")
+        print("Generating augmented images...")
 
-            print(f"\nOriginal dataset size: {original_count} images")
-            print("Generating augmented images...")
+        augmented_rows = []  # New rows for DataFrame
+        augmented_count = 0
 
-            augmented_rows = []  # New rows for DataFrame
-            augmented_count = 0
+        for idx, img_path in enumerate(original_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{original_count}")
 
-            for idx, img_path in enumerate(original_images, 1):
-                if idx % 100 == 0:
-                    print(f"  Progress: {idx}/{original_count}")
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_DATA_DIR / mask_name
 
-                img_name = img_path.name
-                mask_name = get_mask_filename(img_name)
-                mask_path = PP_DATA_DIR / mask_name
+            if not img_path.exists() or not mask_path.exists():
+                continue
 
-                if not img_path.exists() or not mask_path.exists():
-                    continue
+            image = cv2.imread(str(img_path))
+            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
 
-                image = cv2.imread(str(img_path))
-                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+            if image is None or mask is None:
+                continue
 
-                if image is None or mask is None:
-                    continue
+            # Get label for this image from df_filtered
+            row = df_filtered[df_filtered["sample_index"] == img_name]
+            if row.empty:
+                continue
+            original_label = row["label"].iloc[0]
 
-                # Get label for this image from df_filtered
-                row = df_filtered[df_filtered["sample_index"] == img_name]
-                if row.empty:
-                    continue
-                original_label = row["label"].iloc[0]
+            base_name = img_name.replace("img_", "").replace(".png", "")
 
-                base_name = img_name.replace("img_", "").replace(".png", "")
+            # Generate N augmented copies with random transformations
+            for k in range(NUM_AUGMENTED_COPIES):
+                aug_image, aug_mask = apply_augmentation(image, mask)
 
-                # ---- BASIC ROTATIONS / FLIPS (old behaviour) ----
-                if AUGMENTATION_MODE in {"basic", "strong"}:
-                    for rotation in AUGMENT_ROTATIONS:
-                        aug_image, aug_mask = augment_image(
-                            image, mask, rotation=rotation, flip=None
-                        )
+                aug_img_name = f"img_{base_name}_aug{k}.png"
+                aug_mask_name = f"mask_{base_name}_aug{k}.png"
 
-                        aug_img_name = f"img_{base_name}_rot{rotation}.png"
-                        aug_mask_name = f"mask_{base_name}_rot{rotation}.png"
+                cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
+                cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
 
-                        cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
-                        cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
+                augmented_rows.append(
+                    {"sample_index": aug_img_name, "label": original_label}
+                )
+                augmented_count += 1
 
-                        augmented_rows.append(
-                            {"sample_index": aug_img_name, "label": original_label}
-                        )
-                        augmented_count += 1
+        # Add augmented samples to DataFrame
+        if augmented_rows:
+            df_augmented = pd.DataFrame(augmented_rows)
+            df_filtered = pd.concat([df_filtered, df_augmented], ignore_index=True)
 
-                    for flip in AUGMENT_FLIPS:
-                        aug_image, aug_mask = augment_image(
-                            image, mask, rotation=None, flip=flip
-                        )
+        final_count = original_count + augmented_count
+        augmentation_factor = final_count / original_count if original_count > 0 else 0
 
-                        aug_img_name = f"img_{base_name}_{flip}.png"
-                        aug_mask_name = f"mask_{base_name}_{flip}.png"
-
-                        cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
-                        cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
-
-                        augmented_rows.append(
-                            {"sample_index": aug_img_name, "label": original_label}
-                        )
-                        augmented_count += 1
-
-                # ---- STRONG AUGMENTATION (nuova) ----
-                if AUGMENTATION_MODE == "strong":
-                    for k in range(STRONG_AUG_MULTIPLIER):
-                        aug_image, aug_mask = strong_augment_image(image, mask)
-
-                        aug_img_name = f"img_{base_name}_strong{k}.png"
-                        aug_mask_name = f"mask_{base_name}_strong{k}.png"
-
-                        cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
-                        cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
-
-                        augmented_rows.append(
-                            {"sample_index": aug_img_name, "label": original_label}
-                        )
-                        augmented_count += 1
-
-            # Add augmented samples to DataFrame
-            if augmented_rows:
-                df_augmented = pd.DataFrame(augmented_rows)
-                df_filtered = pd.concat([df_filtered, df_augmented], ignore_index=True)
-
-            final_count = original_count + augmented_count
-            augmentation_factor = final_count / original_count if original_count > 0 else 0
-
-            print(f"\n✓ Generated {augmented_count} augmented images")
-            print(f"✓ Total dataset size: {final_count} images ({augmentation_factor:.1f}x augmentation)")
+        print(f"\n✓ Generated {augmented_count} augmented images")
+        print(f"✓ Total dataset size: {final_count} images ({augmentation_factor:.1f}x augmentation)")
     else:
         print_section("Data Augmentation")
         print("DATA_AUGMENTATION=False -> skipping augmentation step.")
@@ -1258,6 +1259,8 @@ def preprocess_dataset():
         print(f"  - Doubles: {split_doubles} images cropped to valid region (kept non-black masks)")
     if REMOVE_BLACK_RECT and cropped_blacks > 0:
         print(f"  - Black rectangles: {cropped_blacks} images cropped")
+    if PADDING_SQUARE:
+        print(f"  - Padding: Images padded to square shape")
     if CROP_TO_MASK:
         print(f"  - Cropped: Images cropped to mask bounding boxes (padding={CROP_PADDING}px)")
     if RESIZE_AND_NORMALIZE:
@@ -1265,11 +1268,7 @@ def preprocess_dataset():
         if APPLY_CLAHE:
             print(f"  - CLAHE: Contrast enhancement applied (clip={CLAHE_CLIP_LIMIT})")
     if DATA_AUGMENTATION:
-        num_rotations = len(AUGMENT_ROTATIONS)
-        num_flips = len(AUGMENT_FLIPS)
-        total_aug = num_rotations + num_flips
-        if total_aug > 0:
-            print(f"  - Augmentation: {total_aug} augmentations per image ({num_rotations} rotations + {num_flips} flips)")
+        print(f"  - Augmentation: {NUM_AUGMENTED_COPIES} random augmented copies per image")
     
     print(f"\nPreprocessed data saved to:")
     print(f"  - Images: {PP_DATA_DIR}")
@@ -1381,7 +1380,43 @@ def preprocess_test_dataset():
         print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
     
     # ========================================================================
-    # STEP 2a: Crop images to mask bounding box
+    # STEP 2a: Pad images to square shape
+    # ========================================================================
+    if PADDING_SQUARE:
+        print_section("Padding Images to Square")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images for padding...")
+        padded_count = 0
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_TEST_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read image and mask
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    # Pad to square
+                    padded_image, padded_mask = pad_to_square(image, mask)
+                    
+                    # Overwrite with padded versions
+                    cv2.imwrite(str(img_path), padded_image)
+                    cv2.imwrite(str(mask_path), padded_mask)
+                    padded_count += 1
+        
+        print(f"\n✓ Padded {padded_count} images to square shape")
+    
+    # ========================================================================
+    # STEP 2b: Crop images to mask bounding box
     # ========================================================================
     if CROP_TO_MASK:
         print_section("Cropping Images to Mask Bounding Box")
@@ -1437,7 +1472,7 @@ def preprocess_test_dataset():
             print(f"✓ Discarded {discarded_count} test images with empty masks")
     
     # ========================================================================
-    # STEP 2b: Resize and normalize all images
+    # STEP 2c: Resize and normalize all images
     # ========================================================================
     if RESIZE_AND_NORMALIZE:
         print_section("Resizing and Normalizing Images")
@@ -1464,7 +1499,7 @@ def preprocess_test_dataset():
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                 
                 if image is not None and mask is not None:
-                    # Resize and normalize
+                    # Resize image
                     resized_image, resized_mask = resize_and_normalize_image(
                         image, mask, 
                         target_size=TARGET_SIZE,
@@ -1491,6 +1526,8 @@ def preprocess_test_dataset():
     print("\nPreprocessing steps applied:")
     if SPLIT_DOUBLES and split_doubles > 0:
         print(f"  - Doubles: {split_doubles} images cropped to valid region (kept non-black masks)")
+    if PADDING_SQUARE:
+        print(f"  - Padding: Images padded to square shape")
     if CROP_TO_MASK:
         print(f"  - Cropped: Images cropped to mask bounding boxes (padding={CROP_PADDING}px)")
     if RESIZE_AND_NORMALIZE:
