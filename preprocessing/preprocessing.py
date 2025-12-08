@@ -17,8 +17,9 @@ REMOVE_SHREK = True   # Remove Shrek-contaminated images
 FIX_STAINED = True    # Fix green-stained images using background color
 SPLIT_DOUBLES = True  # Split double images into two separate images
 REMOVE_BLACK_RECT = True  # Remove black rectangles from images
-CROP_TO_MASK = False  # Crop images to mask bounding box (removes empty background)
+CROP_TO_MASK = False  # Crop images to mask bounding box (removes empty background), can be a problem with padding
 RESIZE_AND_NORMALIZE = True  # Resize images and apply normalization/contrast enhancement
+DATA_AUGMENTATION = True  # Apply data augmentation (rotation, flipping) - TRAINING SET ONLY
 
 # Crop to mask settings
 CROP_PADDING = 10  # Padding around mask bounding box in pixels
@@ -28,6 +29,10 @@ TARGET_SIZE = 384  # Target size for resizing (will be TARGET_SIZE x TARGET_SIZE
 APPLY_CLAHE = True  # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
 CLAHE_CLIP_LIMIT = 2.0  # CLAHE clip limit
 CLAHE_TILE_GRID_SIZE = (8, 8)  # CLAHE tile grid size
+
+# Data augmentation settings (applied to training set only)
+AUGMENT_ROTATIONS = [90, 180, 270]  # Rotation angles in degrees
+AUGMENT_FLIPS = ['horizontal', 'vertical']  # Flip types to apply
 
 # ============================================================================
 # PATHS
@@ -488,6 +493,43 @@ def resize_and_normalize_image(image, mask, target_size=1024, apply_clahe=True,
     
     return canvas_image, canvas_mask
 
+def augment_image(image, mask, rotation=None, flip=None):
+    """
+    Apply augmentation to image and mask (rotation and/or flipping)
+    
+    Args:
+        image: BGR image (numpy array)
+        mask: Grayscale mask (numpy array)
+        rotation: Rotation angle in degrees (90, 180, 270) or None
+        flip: Flip type ('horizontal', 'vertical') or None
+    
+    Returns:
+        Tuple of (augmented_image, augmented_mask)
+    """
+    aug_image = image.copy()
+    aug_mask = mask.copy()
+    
+    # Apply rotation
+    if rotation == 90:
+        aug_image = cv2.rotate(aug_image, cv2.ROTATE_90_CLOCKWISE)
+        aug_mask = cv2.rotate(aug_mask, cv2.ROTATE_90_CLOCKWISE)
+    elif rotation == 180:
+        aug_image = cv2.rotate(aug_image, cv2.ROTATE_180)
+        aug_mask = cv2.rotate(aug_mask, cv2.ROTATE_180)
+    elif rotation == 270:
+        aug_image = cv2.rotate(aug_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        aug_mask = cv2.rotate(aug_mask, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    
+    # Apply flip
+    if flip == 'horizontal':
+        aug_image = cv2.flip(aug_image, 1)  # 1 = horizontal flip
+        aug_mask = cv2.flip(aug_mask, 1)
+    elif flip == 'vertical':
+        aug_image = cv2.flip(aug_image, 0)  # 0 = vertical flip
+        aug_mask = cv2.flip(aug_mask, 0)
+    
+    return aug_image, aug_mask
+
 def detect_green_stain(image):
     """
     Detect green stain in image using HSV color thresholding
@@ -909,6 +951,100 @@ def preprocess_dataset():
         print(f"\n✓ Resized and normalized {resized_count} image-mask pairs")
         if APPLY_CLAHE:
             print(f"✓ Applied CLAHE contrast enhancement (clip={CLAHE_CLIP_LIMIT}, grid={CLAHE_TILE_GRID_SIZE})")
+    
+    # ========================================================================
+    # STEP 4: Data Augmentation (Training Set Only)
+    # ========================================================================
+    if DATA_AUGMENTATION:
+        print_section("Data Augmentation")
+        print(f"Rotations: {AUGMENT_ROTATIONS}°")
+        print(f"Flips: {AUGMENT_FLIPS}")
+        
+        # Get all current image files
+        original_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        original_count = len(original_images)
+        
+        print(f"\nOriginal dataset size: {original_count} images")
+        print(f"Generating augmented images...")
+        
+        augmented_rows = []  # Store new rows for DataFrame
+        augmented_count = 0
+        
+        for idx, img_path in enumerate(original_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{original_count}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_DATA_DIR / mask_name
+            
+            # Get original sample info from DataFrame
+            sample_row = df_filtered[df_filtered['sample_index'] == img_name]
+            if len(sample_row) == 0:
+                continue
+            
+            original_label = sample_row.iloc[0]['label']
+            
+            # Read original image and mask
+            image = cv2.imread(str(img_path))
+            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+            
+            if image is None or mask is None:
+                continue
+            
+            # Generate augmentations
+            # Rotations
+            for rotation in AUGMENT_ROTATIONS:
+                aug_image, aug_mask = augment_image(image, mask, rotation=rotation, flip=None)
+                
+                # Save augmented image and mask
+                base_name = img_name.replace('img_', '').replace('.png', '')
+                aug_img_name = f"img_{base_name}_rot{rotation}.png"
+                aug_mask_name = f"mask_{base_name}_rot{rotation}.png"
+                
+                cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
+                cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
+                
+                # Add to DataFrame
+                augmented_rows.append({
+                    'sample_index': aug_img_name,
+                    'label': original_label
+                })
+                augmented_count += 1
+            
+            # Flips
+            for flip in AUGMENT_FLIPS:
+                aug_image, aug_mask = augment_image(image, mask, rotation=None, flip=flip)
+                
+                # Save augmented image and mask
+                base_name = img_name.replace('img_', '').replace('.png', '')
+                aug_img_name = f"img_{base_name}_{flip}.png"
+                aug_mask_name = f"mask_{base_name}_{flip}.png"
+                
+                cv2.imwrite(str(PP_DATA_DIR / aug_img_name), aug_image)
+                cv2.imwrite(str(PP_DATA_DIR / aug_mask_name), aug_mask)
+                
+                # Add to DataFrame
+                augmented_rows.append({
+                    'sample_index': aug_img_name,
+                    'label': original_label
+                })
+                augmented_count += 1
+        
+        # Add augmented samples to DataFrame
+        if augmented_rows:
+            df_augmented = pd.DataFrame(augmented_rows)
+            df_filtered = pd.concat([df_filtered, df_augmented], ignore_index=True)
+        
+        final_count = original_count + augmented_count
+        augmentation_factor = final_count / original_count
+        
+        print(f"\n✓ Generated {augmented_count} augmented images")
+        print(f"✓ Total dataset size: {final_count} images ({augmentation_factor:.1f}x augmentation)")
+    
+    # ========================================================================
+    # STEP 5: Verification
+    # ========================================================================
     print_section("Verification")
     
     # Check that excluded images are NOT in output
@@ -929,7 +1065,7 @@ def preprocess_dataset():
         print("\n✓ Verification passed - excluded images not in output")
     
     # ========================================================================
-    # STEP 5: Save preprocessed labels
+    # STEP 6: Save preprocessed labels
     # ========================================================================
     print_section("Saving Preprocessed Labels")
     
@@ -969,6 +1105,11 @@ def preprocess_dataset():
         print(f"  - Resized: All images normalized to {TARGET_SIZE}x{TARGET_SIZE}")
         if APPLY_CLAHE:
             print(f"  - CLAHE: Contrast enhancement applied (clip={CLAHE_CLIP_LIMIT})")
+    if DATA_AUGMENTATION:
+        num_rotations = len(AUGMENT_ROTATIONS)
+        num_flips = len(AUGMENT_FLIPS)
+        total_aug = num_rotations + num_flips
+        print(f"  - Augmentation: {total_aug} augmentations per image ({num_rotations} rotations + {num_flips} flips)")
     
     print(f"\nPreprocessed data saved to:")
     print(f"  - Images: {PP_DATA_DIR}")
