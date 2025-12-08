@@ -31,9 +31,9 @@ CROP_PADDING = 10  # Padding around mask bounding box in pixels
 
 # RESIZING & NORMALIZATION
 TARGET_SIZE = 384  # Target size for resizing (will be TARGET_SIZE x TARGET_SIZE)
-APPLY_CLAHE = True  # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-CLAHE_CLIP_LIMIT = 2.0  # CLAHE clip limit - lower = less aggressive, fewer artifacts
-CLAHE_TILE_GRID_SIZE = (16, 16)  # Larger grid = smoother transitions, less tiling pattern
+APPLY_CLAHE = False  # Apply CLAHE - DISABLED to avoid artifacts, natural images preferred
+CLAHE_CLIP_LIMIT = 2.0  # CLAHE clip limit (if enabled)
+CLAHE_TILE_GRID_SIZE = (16, 16)  # CLAHE tile grid size (if enabled)
 
 # AUGMENTATION
 # Optimized for medical histopathology cell classification
@@ -525,44 +525,55 @@ def pad_to_square(image, mask):
     return square_image, square_mask
 
 def resize_and_normalize_image(image, mask, target_size=384, apply_clahe=True, 
-                               clip_limit=3.0, tile_grid_size=(8, 8)):
+                               clip_limit=2.0, tile_grid_size=(16, 16)):
     """
-    Resize image and mask to target size with high-quality interpolation
-    and optionally apply adaptive histogram equalization for contrast enhancement
+    Resize image and mask to target size using professional interpolation
+    Simple, direct approach without artifacts
     
     Args:
         image: BGR image (numpy array)
         mask: Grayscale mask (numpy array)
         target_size: Target size for output (will be target_size x target_size)
-        apply_clahe: Whether to apply CLAHE for contrast enhancement
+        apply_clahe: Whether to apply CLAHE for contrast enhancement (optional)
         clip_limit: CLAHE clip limit parameter
         tile_grid_size: CLAHE tile grid size parameter
     
     Returns:
         Tuple of (resized_image, resized_mask)
     """
-    h, w = image.shape[:2]
+    # Resize with high-quality Lanczos interpolation (4-lobe)
+    # Best quality for medical images, smooth and artifact-free
+    resized_image = cv2.resize(
+        image, 
+        (target_size, target_size), 
+        interpolation=cv2.INTER_LANCZOS4
+    )
     
-    # Professional resize with anti-aliasing
-    # INTER_LANCZOS4 provides best quality for both upscaling and downscaling
-    resized_image = cv2.resize(image, (target_size, target_size), interpolation=cv2.INTER_LANCZOS4)
+    # Resize mask with nearest neighbor to preserve discrete values
+    resized_mask = cv2.resize(
+        mask, 
+        (target_size, target_size), 
+        interpolation=cv2.INTER_NEAREST
+    )
     
-    # Mask should use nearest neighbor to preserve label values
-    resized_mask = cv2.resize(mask, (target_size, target_size), interpolation=cv2.INTER_NEAREST)
-    
-    # Apply adaptive histogram equalization if requested
+    # Optional: Apply simple normalization instead of CLAHE
     if apply_clahe:
-        # Convert to LAB color space - perceptually uniform
-        lab = cv2.cvtColor(resized_image, cv2.COLOR_BGR2LAB)
-        l_channel, a_channel, b_channel = cv2.split(lab)
+        # Gentle contrast enhancement using simple histogram normalization
+        # Convert to float for processing
+        img_float = resized_image.astype(np.float32)
         
-        # Apply CLAHE only to luminance channel
-        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-        l_clahe = clahe.apply(l_channel)
+        # Normalize each channel to [0, 255] range
+        for i in range(3):
+            channel = img_float[:, :, i]
+            min_val = np.min(channel)
+            max_val = np.max(channel)
+            
+            # Avoid division by zero
+            if max_val > min_val:
+                # Stretch histogram to full range
+                img_float[:, :, i] = ((channel - min_val) / (max_val - min_val)) * 255.0
         
-        # Merge and convert back to BGR
-        lab_clahe = cv2.merge([l_clahe, a_channel, b_channel])
-        resized_image = cv2.cvtColor(lab_clahe, cv2.COLOR_LAB2BGR)
+        resized_image = np.clip(img_float, 0, 255).astype(np.uint8)
     
     return resized_image, resized_mask
 
