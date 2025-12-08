@@ -27,12 +27,12 @@ CROP_PADDING = 10  # Padding around mask bounding box in pixels
 # Resize and normalization settings
 TARGET_SIZE = 384  # Target size for resizing (will be TARGET_SIZE x TARGET_SIZE)
 APPLY_CLAHE = True  # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-CLAHE_CLIP_LIMIT = 2.0  # CLAHE clip limit
+CLAHE_CLIP_LIMIT = 3.0  # CLAHE clip limit (increased from 2.0 for better contrast)
 CLAHE_TILE_GRID_SIZE = (8, 8)  # CLAHE tile grid size
 
 # Data augmentation settings (applied to training set only)
 AUGMENT_ROTATIONS = [90, 180, 270]  # Rotation angles in degrees
-AUGMENT_FLIPS = ['horizontal', 'vertical']  # Flip types to apply
+AUGMENT_FLIPS = []  # Flip types to apply ['horizontal', 'vertical']
 
 # ============================================================================
 # PATHS
@@ -1037,7 +1037,10 @@ def preprocess_dataset():
             df_filtered = pd.concat([df_filtered, df_augmented], ignore_index=True)
         
         final_count = original_count + augmented_count
-        augmentation_factor = final_count / original_count
+        if original_count > 0:
+            augmentation_factor = final_count / original_count
+        else:
+            augmentation_factor = 0
         
         print(f"\n✓ Generated {augmented_count} augmented images")
         print(f"✓ Total dataset size: {final_count} images ({augmentation_factor:.1f}x augmentation)")
@@ -1109,7 +1112,8 @@ def preprocess_dataset():
         num_rotations = len(AUGMENT_ROTATIONS)
         num_flips = len(AUGMENT_FLIPS)
         total_aug = num_rotations + num_flips
-        print(f"  - Augmentation: {total_aug} augmentations per image ({num_rotations} rotations + {num_flips} flips)")
+        if total_aug > 0:
+            print(f"  - Augmentation: {total_aug} augmentations per image ({num_rotations} rotations + {num_flips} flips)")
     
     print(f"\nPreprocessed data saved to:")
     print(f"  - Images: {PP_DATA_DIR}")
