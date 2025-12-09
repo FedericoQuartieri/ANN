@@ -59,14 +59,16 @@ The project combines a **modular preprocessing pipeline** with a **Bidirectional
 
 ## How to Run
 
-### 1. Setup Environment
+### 1. Download data
+
+kaggle competitions download -c an2dl2526c1
+
+### 2. Setup Environment
 
 Clone the repository and install dependencies:
 
 ```bash
 git clone https://github.com/FedericoQuartieri/ANN.git
-cd ANN
-git checkout preprocessing_gridsearch
 
 # Create virtual environment
 python -m venv .venv
@@ -78,7 +80,7 @@ pip install -r requirements.txt  # For CPU
 pip install -r requirements_cuda.txt  # For GPU with CUDA
 ```
 
-### 2. Run Preprocessing (Optional)
+### 3. Run Preprocessing (Optional)
 
 The preprocessing script is standalone and fully configurable:
 
@@ -93,7 +95,7 @@ This will:
 
 You can customize preprocessing by editing the configuration flags at the top of `preprocessing.py`.
 
-### 3. Run Analysis Scripts (Optional)
+### 4. Run Analysis Scripts (Optional)
 
 Explore data insights with the analysis scripts:
 
@@ -107,7 +109,7 @@ python analysis/outliers_analysis.py
 
 These will generate visualizations in the `plots/` directory.
 
-### 4. Train and Evaluate Models
+### 5. Train and Evaluate Models
 
 Open and run the Jupyter notebooks:
 
