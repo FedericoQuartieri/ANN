@@ -61,7 +61,9 @@ The project combines a **modular preprocessing pipeline** with a **Bidirectional
 
 ### 1. Download data
 
+```bash
 kaggle competitions download -c an2dl2526c1
+```
 
 ### 2. Setup Environment
 
