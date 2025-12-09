@@ -9,7 +9,7 @@ PREPROCESSING_KEYS: List[str] = [
         "pp_padding_square",
         "pp_crop_to_mask",
         "pp_resize_and_normalize",
-        "pp_augmentation_mode",
+        "pp_augmentation_enabled",
         "pp_crop_padding",
         "pp_target_size",
         "pp_apply_clahe",
@@ -68,7 +68,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_crop_to_mask": [False],
         "pp_resize_and_normalize": [True],
 
-        "pp_augmentation_mode": ["strong"],      # "none" | "basic" | "strong"
+        "pp_augmentation_enabled": [True],
 
         "pp_crop_padding": [10],
         "pp_target_size": [384],
@@ -106,7 +106,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_crop_to_mask": [False],
         "pp_resize_and_normalize": [True],
 
-        "pp_augmentation_mode": ["strong"],      # "none" | "basic" | "strong"
+        "pp_augmentation_enabled": [True], 
 
         "pp_crop_padding": [10],
         "pp_target_size": [384],
@@ -195,7 +195,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_crop_to_mask": [False],
         "pp_resize_and_normalize": [True],
 
-        "pp_augmentation_mode": ["strong"],      # "none" | "basic" | "strong"
+        "pp_augmentation_enabled": [True],
 
         "pp_crop_padding": [10],
         "pp_target_size": [384],
