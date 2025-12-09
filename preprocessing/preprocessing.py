@@ -73,12 +73,8 @@ def apply_external_config(cfg_dict: dict | None) -> None:
     CROP_TO_MASK        = bool(cfg_dict.get("pp_crop_to_mask",        False))
     RESIZE_AND_NORMALIZE= bool(cfg_dict.get("pp_resize_and_normalize", False))
 
-    DATA_AUGMENTATION = False
-    
     # Modalità di alto livello ("none" = spegni augmentation)
-    AUGMENTATION_MODE   = str(cfg_dict.get("pp_augmentation_mode", "strong")).lower()
-    if AUGMENTATION_MODE == "none":
-        DATA_AUGMENTATION = False
+    DATA_AUGMENTATION = bool(cfg_dict.get("pp_augmentation_enabled", True))
 
     # ------------------------------------------------------------
     # PARAMETRI GEOMETRICI / CROP / RESIZE
