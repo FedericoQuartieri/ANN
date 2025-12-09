@@ -9,43 +9,8 @@ import pandas as pd
 import cv2
 import numpy as np
 from pathlib import Path
-
-# ============================================================================
-# CONFIGURATION - Toggle preprocessing steps here
-# ============================================================================
-REMOVE_SHREK = True   # Remove Shrek-contaminated images
-FIX_STAINED = True    # Fix green-stained images using background color
-SPLIT_DOUBLES = True  # Split double images into two separate images
-REMOVE_BLACK_RECT = True  # Remove black rectangles from images
-PADDING_SQUARE = True  # Pad images to square shape with smart background color
-CROP_TO_MASK = True  # Crop images to mask bounding box (may remove padding)
-RESIZE_AND_NORMALIZE = True  # Resize images and apply normalization/contrast enhancement
-DATA_AUGMENTATION = True  # Apply data augmentation (training set only)
-
-# ----------------------------------------------------------------------------
-# PREPROCESSING PARAMETERS
-# ----------------------------------------------------------------------------
-
-# CROPPING
-CROP_PADDING = 10  # Padding around mask bounding box in pixels
-
-# RESIZING & NORMALIZATION
-TARGET_SIZE = 384  # Target size for resizing (will be TARGET_SIZE x TARGET_SIZE)
-APPLY_CLAHE = False  # Apply CLAHE - DISABLED to avoid artifacts, natural images preferred
-CLAHE_CLIP_LIMIT = 2.0  # CLAHE clip limit (if enabled)
-CLAHE_TILE_GRID_SIZE = (16, 16)  # CLAHE tile grid size (if enabled)
-
-# AUGMENTATION
-# Optimized for medical histopathology cell classification
-# Dataset: 691 samples, 4 cancer types (imbalanced: 77-220 per class)
-NUM_AUGMENTED_COPIES = 4        # Creates ~3800 total samples (691 * 5.5x) - good balance
-ROTATION_DEGREES = 180          # Full rotation (±180°) - cells have no canonical orientation
-ZOOM_SCALE_RANGE = (0.85, 1.15) # Moderate zoom (85-115%) - simulates different magnifications
-BRIGHTNESS_JITTER = 0.15        # Moderate (±15%) - staining intensity variation
-CONTRAST_JITTER = 0.15          # Moderate (±15%) - scanner/staining differences  
-SATURATION_JITTER = 0.15        # Moderate (±15%) - H&E saturation can vary
-HUE_JITTER = 0.03               # Conservative (±3%) - preserve H&E color meaning
-RANDOM_ERASING_P = 0.05         # Low probability (5%) - simulates artifacts/debris
+import sys
+import json
 
 
 # ============================================================================
@@ -76,6 +41,95 @@ DOUBLE_IMAGES_TEST_PATH = BASE_DIR / "preprocessing" / "double_images_test.txt"
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+def apply_external_config(cfg_dict: dict | None) -> None:
+    """
+    Imposta TUTTE le variabili globali di preprocessing usando:
+    - i valori passati dal notebook (chiavi pp_*)
+    - altrimenti i default "ragionevoli" hardcodati qui dentro.
+
+    Così possiamo eliminare il blocco di macro globali in testa al file.
+    """
+
+    if cfg_dict is None:
+        cfg_dict = {}
+
+    global REMOVE_SHREK, FIX_STAINED, SPLIT_DOUBLES, REMOVE_BLACK_RECT
+    global PADDING_SQUARE, CROP_TO_MASK, RESIZE_AND_NORMALIZE, DATA_AUGMENTATION
+    global CROP_PADDING, TARGET_SIZE, APPLY_CLAHE, CLAHE_CLIP_LIMIT, CLAHE_TILE_GRID_SIZE
+    global NUM_AUGMENTED_COPIES, ROTATION_DEGREES, ZOOM_SCALE_RANGE
+    global BRIGHTNESS_JITTER, CONTRAST_JITTER
+    global SATURATION_JITTER, HUE_JITTER, RANDOM_ERASING_P
+    global AUGMENTATION_MODE
+
+    # ------------------------------------------------------------
+    # SWITCH LOGICI DI BASE (true/false)
+    # ------------------------------------------------------------
+    # Default: tutto acceso come prima
+    REMOVE_SHREK        = bool(cfg_dict.get("pp_remove_shrek",        False))
+    FIX_STAINED         = bool(cfg_dict.get("pp_fix_stained",         False))
+    SPLIT_DOUBLES       = bool(cfg_dict.get("pp_split_doubles",       False))
+    REMOVE_BLACK_RECT   = bool(cfg_dict.get("pp_remove_black_rect",   False))
+    PADDING_SQUARE      = bool(cfg_dict.get("pp_padding_square",      False))
+    CROP_TO_MASK        = bool(cfg_dict.get("pp_crop_to_mask",        False))
+    RESIZE_AND_NORMALIZE= bool(cfg_dict.get("pp_resize_and_normalize", False))
+
+    DATA_AUGMENTATION = False
+    
+    # Modalità di alto livello ("none" = spegni augmentation)
+    AUGMENTATION_MODE   = str(cfg_dict.get("pp_augmentation_mode", "strong")).lower()
+    if AUGMENTATION_MODE == "none":
+        DATA_AUGMENTATION = False
+
+    # ------------------------------------------------------------
+    # PARAMETRI GEOMETRICI / CROP / RESIZE
+    # ------------------------------------------------------------
+    # Prima erano:
+    # CROP_PADDING = 10
+    # TARGET_SIZE = 384
+    # APPLY_CLAHE = False
+    # CLAHE_CLIP_LIMIT = 2.0
+    # CLAHE_TILE_GRID_SIZE = (16, 16)
+
+    CROP_PADDING = int(cfg_dict.get("pp_crop_padding", 10))
+    TARGET_SIZE  = int(cfg_dict.get("pp_target_size", 384))
+
+    APPLY_CLAHE      = bool(cfg_dict.get("pp_apply_clahe", False))
+    CLAHE_CLIP_LIMIT = float(cfg_dict.get("pp_clahe_clip_limit", 2.0))
+
+    tile = cfg_dict.get("pp_clahe_tile_grid", (16, 16))
+    if isinstance(tile, (list, tuple)) and len(tile) == 2:
+        CLAHE_TILE_GRID_SIZE = (int(tile[0]), int(tile[1]))
+    else:
+        CLAHE_TILE_GRID_SIZE = (16, 16)
+
+    # ------------------------------------------------------------
+    # PARAMETRI DI AUGMENTATION OFFLINE
+    # ------------------------------------------------------------
+    # Prima erano:
+    # NUM_AUGMENTED_COPIES = 4
+    # ROTATION_DEGREES = 180
+    # ZOOM_SCALE_RANGE = (0.85, 1.15)
+    # BRIGHTNESS_JITTER = 0.15
+    # CONTRAST_JITTER = 0.15
+    # SATURATION_JITTER = 0.15
+    # HUE_JITTER = 0.03
+    # RANDOM_ERASING_P = 0.05
+
+    NUM_AUGMENTED_COPIES = int(cfg_dict.get("pp_num_aug_copies", 4))
+
+    ROTATION_DEGREES = int(cfg_dict.get("pp_strong_rotation_degrees", 180))
+
+    zmin = cfg_dict.get("pp_strong_zoom_min", 0.85)
+    zmax = cfg_dict.get("pp_strong_zoom_max", 1.15)
+    ZOOM_SCALE_RANGE = (float(zmin), float(zmax))
+
+    BRIGHTNESS_JITTER = float(cfg_dict.get("pp_strong_brightness", 0.15))
+    CONTRAST_JITTER   = float(cfg_dict.get("pp_strong_contrast",   0.15))
+    SATURATION_JITTER = float(cfg_dict.get("pp_strong_saturation", 0.15))
+    HUE_JITTER        = float(cfg_dict.get("pp_strong_hue",        0.03))
+
+    RANDOM_ERASING_P  = float(cfg_dict.get("pp_strong_random_erasing_p", 0.05))
+
 
 def print_section(title):
     """Print a formatted section header"""
@@ -1556,6 +1610,22 @@ def preprocess_test_dataset():
 # ============================================================================
 
 if __name__ == "__main__":
+        # Optional external config: JSON string passed as first CLI argument
+    external_cfg = {}
+
+    if len(sys.argv) > 1:
+        try:
+            import json
+            external_cfg = json.loads(sys.argv[1])
+            print_section("External config from ANN notebook")
+            for k, v in external_cfg.items():
+                print(f"  {k} = {v}")
+        except Exception as e:
+            print("WARNING: could not parse external config JSON:", e)
+            print("Proceeding with internal default settings.")
+
+    apply_external_config(external_cfg)
+            
     print("="*80)
     print(" PREPROCESSING PIPELINE")
     print("="*80)
