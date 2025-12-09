@@ -41,7 +41,6 @@ class TrainingConfig:
     mask_dir: Optional[str] = None
 
     # ---- DATA SPLIT ----
-    val_size: float = 0.2
     random_seed: int = 42
 
 
@@ -139,6 +138,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         # ===== Validation
         "cv_type": ["holdout"],
         "n_splits": [5],
+        "val_size": [0.2]
     },
 
 
@@ -171,6 +171,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         # ===== Validation
         "cv_type": ["holdout"],
         "n_splits": [5],
+        "val_size": [0.2]
     },
 
     # ----------------------------------------------------------------------
@@ -227,6 +228,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         # ===== Validation
         "cv_type": ["holdout"],
         "n_splits": [5],
+        "val_size": [0.2]
     }
 
 
