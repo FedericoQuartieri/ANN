@@ -127,7 +127,7 @@ The notebooks will:
 
 ## Acknowledgements
 
-This work was developed as part of the **Advanced Neural Networks and Deep Learning (AN2DL)** course at Politecnico di Milano by the team **“Transformers: rise of the beasts”**:
+This work was developed as part of the **Advanced Neural Networks and Deep Learning (AN2DL)** course at Politecnico di Milano by the composed by:
 
 - Tommaso Marchesini  
 - Federico Quartieri  
