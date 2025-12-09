@@ -230,4 +230,78 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "cv_type": ["holdout"],
         "n_splits": [5],
     },
+
+    "resnet50_img384_preprocessing_25ep": {
+        # Dataset preprocessato
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # Hyperparam
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [25],
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["multiply"],
+
+        # Validazione
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+    },
+
+    "resnet50_img384_preprocessing_250ep": {
+        # Dataset preprocessato - training lungo con early stopping implicito
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # Hyperparam ottimizzati per training lungo
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [24],  # Batch più grande per stabilità con GPU
+        "num_workers": [6],  # Più worker per GPU
+        "lr": [5e-5],  # LR più basso per convergenza stabile su 250 epochs
+        "weight_decay": [5e-5],  # Weight decay ridotto per evitare underfit
+        "epochs": [250],
+        "use_scheduler": [True],  # Cosine annealing aiuta su training lunghi
+        "use_masks": [True],
+        "mask_mode": ["multiply"],
+
+        # Validazione
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+    },
+
+    "resnet50_img384_pp_optimized": {
+        # Configurazione ottimizzata per F1 score migliore
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # Hyperparam ottimizzati per class imbalance
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],  # Batch più piccolo = più varianza gradiente = migliore generalizzazione
+        "num_workers": [6],
+        "lr": [2e-4],  # LR più alto per convergenza più rapida ed evitare minimi locali
+        "weight_decay": [1e-4],  # Weight decay standard
+        "epochs": [100],  # Meno epochs con convergenza più veloce
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["multiply"],
+        "label_smoothing": [0.1],  # Label smoothing per ridurre overconfidence
+
+        # Validazione
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+    },
+
+
+
+
 }
