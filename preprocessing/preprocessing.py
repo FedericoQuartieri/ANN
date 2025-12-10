@@ -1,6 +1,48 @@
 """
 Preprocessing Script for Training and Test Datasets
-This script applies various preprocessing steps to the training and test data.
+
+Modular preprocessing pipeline with individual switches for each step.
+Preserves medical information through smart cropping and tile-based splitting.
+
+PREPROCESSING STEPS:
+
+1. Remove contaminated images (Shrek, stained, doubles, black rectangles)
+2. Pad images to square shape (expands to minimum TARGET_SIZE if needed)
+3. Crop to mask bounding box (centered square, minimum TARGET_SIZE)
+4. Split large images into non-overlapping tiles (TARGET_SIZE x TARGET_SIZE)
+5. Smart discard tiles with insufficient mask coverage
+6. Remove images with completely empty masks
+7. Darken pixels outside mask region
+8. Data augmentation (rotation, zoom, color jitter, flips)
+
+CONFIGURATION SWITCHES:
+
+- REMOVE_SHREK: Remove Shrek-contaminated images
+- FIX_STAINED: Fix green-stained images
+- SPLIT_DOUBLES: Split double images
+- REMOVE_BLACK_RECT: Remove black rectangles
+- PADDING_SQUARE: Pad to square (expands small images to TARGET_SIZE)
+- CROP_TO_MASK: Crop to mask bounding box (centered, min TARGET_SIZE)
+- SPLIT_INTO_TILES: Split images > TARGET_SIZE into tiles
+- REMOVE_EMPTY_MASKS: Remove completely empty masks
+- DARKEN_OUTSIDE_MASK: Set pixels outside mask to black
+- DATA_AUGMENTATION: Apply random augmentations
+
+PARAMETERS:
+
+- TARGET_SIZE: Tile size and minimum image size (default: 256)
+- CROP_PADDING: Padding around mask bbox (default: 10)
+- SMART_DISCARD_THRESHOLD: Min mask coverage % (default: 0.05 = 5%)
+
+FEATURES:
+
+✓ Preserves medical information (no lossy resizing)
+✓ Smart centered cropping focused on mask region
+✓ Handles variable image sizes gracefully
+✓ Tile-based splitting for large images
+✓ Smart discard of low-quality tiles
+✓ Clean, focused dataset
+✓ Fully modular and configurable
 """
 
 import os
@@ -43,76 +85,40 @@ DOUBLE_IMAGES_TEST_PATH = BASE_DIR / "preprocessing" / "double_images_test.txt"
 # ============================================================================
 def apply_external_config(cfg_dict: dict | None) -> None:
     """
-    Imposta TUTTE le variabili globali di preprocessing usando:
-    - i valori passati dal notebook (chiavi pp_*)
-    - altrimenti i default "ragionevoli" hardcodati qui dentro.
-
-    Così possiamo eliminare il blocco di macro globali in testa al file.
+    Set all preprocessing global variables using values passed from notebook
+    or reasonable defaults.
     """
 
     if cfg_dict is None:
         cfg_dict = {}
 
     global REMOVE_SHREK, FIX_STAINED, SPLIT_DOUBLES, REMOVE_BLACK_RECT
-    global PADDING_SQUARE, CROP_TO_MASK, RESIZE_AND_NORMALIZE, DATA_AUGMENTATION
-    global CROP_PADDING, TARGET_SIZE, APPLY_CLAHE, CLAHE_CLIP_LIMIT, CLAHE_TILE_GRID_SIZE
+    global PADDING_SQUARE, CROP_TO_MASK, SPLIT_INTO_TILES, REMOVE_EMPTY_MASKS
+    global DARKEN_OUTSIDE_MASK, SMART_DISCARD_THRESHOLD, DATA_AUGMENTATION
+    global TARGET_SIZE, CROP_PADDING
     global NUM_AUGMENTED_COPIES, ROTATION_DEGREES, ZOOM_SCALE_RANGE
-    global BRIGHTNESS_JITTER, CONTRAST_JITTER
-    global SATURATION_JITTER, HUE_JITTER, RANDOM_ERASING_P
-    global AUGMENTATION_MODE
+    global BRIGHTNESS_JITTER, CONTRAST_JITTER, SATURATION_JITTER, HUE_JITTER
+    global RANDOM_ERASING_P
 
-    # ------------------------------------------------------------
-    # SWITCH LOGICI DI BASE (true/false)
-    # ------------------------------------------------------------
-    # Default: tutto acceso come prima
-    REMOVE_SHREK        = bool(cfg_dict.get("pp_remove_shrek",        False))
-    FIX_STAINED         = bool(cfg_dict.get("pp_fix_stained",         False))
-    SPLIT_DOUBLES       = bool(cfg_dict.get("pp_split_doubles",       False))
-    REMOVE_BLACK_RECT   = bool(cfg_dict.get("pp_remove_black_rect",   False))
-    PADDING_SQUARE      = bool(cfg_dict.get("pp_padding_square",      False))
-    CROP_TO_MASK        = bool(cfg_dict.get("pp_crop_to_mask",        False))
-    RESIZE_AND_NORMALIZE= bool(cfg_dict.get("pp_resize_and_normalize", False))
+    # Preprocessing switches
+    REMOVE_SHREK        = bool(cfg_dict.get("pp_remove_shrek",        True))
+    FIX_STAINED         = bool(cfg_dict.get("pp_fix_stained",         True))
+    SPLIT_DOUBLES       = bool(cfg_dict.get("pp_split_doubles",       True))
+    REMOVE_BLACK_RECT   = bool(cfg_dict.get("pp_remove_black_rect",   True))
+    PADDING_SQUARE      = bool(cfg_dict.get("pp_padding_square",      True))
+    CROP_TO_MASK        = bool(cfg_dict.get("pp_crop_to_mask",        True))
+    SPLIT_INTO_TILES    = bool(cfg_dict.get("pp_split_into_tiles",    True))
+    REMOVE_EMPTY_MASKS  = bool(cfg_dict.get("pp_remove_empty_masks",  True))
+    DARKEN_OUTSIDE_MASK = bool(cfg_dict.get("pp_darken_outside_mask", True))
+    DATA_AUGMENTATION   = bool(cfg_dict.get("pp_augmentation_enabled", True))
 
-    # Modalità di alto livello ("none" = spegni augmentation)
-    DATA_AUGMENTATION = bool(cfg_dict.get("pp_augmentation_enabled", True))
-
-    # ------------------------------------------------------------
-    # PARAMETRI GEOMETRICI / CROP / RESIZE
-    # ------------------------------------------------------------
-    # Prima erano:
-    # CROP_PADDING = 10
-    # TARGET_SIZE = 384
-    # APPLY_CLAHE = False
-    # CLAHE_CLIP_LIMIT = 2.0
-    # CLAHE_TILE_GRID_SIZE = (16, 16)
-
+    # Size and threshold parameters
+    TARGET_SIZE  = int(cfg_dict.get("pp_target_size", 256))
     CROP_PADDING = int(cfg_dict.get("pp_crop_padding", 10))
-    TARGET_SIZE  = int(cfg_dict.get("pp_target_size", 384))
+    SMART_DISCARD_THRESHOLD = float(cfg_dict.get("pp_smart_discard_threshold", 0.05))
 
-    APPLY_CLAHE      = bool(cfg_dict.get("pp_apply_clahe", False))
-    CLAHE_CLIP_LIMIT = float(cfg_dict.get("pp_clahe_clip_limit", 2.0))
-
-    tile = cfg_dict.get("pp_clahe_tile_grid", (16, 16))
-    if isinstance(tile, (list, tuple)) and len(tile) == 2:
-        CLAHE_TILE_GRID_SIZE = (int(tile[0]), int(tile[1]))
-    else:
-        CLAHE_TILE_GRID_SIZE = (16, 16)
-
-    # ------------------------------------------------------------
-    # PARAMETRI DI AUGMENTATION OFFLINE
-    # ------------------------------------------------------------
-    # Prima erano:
-    # NUM_AUGMENTED_COPIES = 4
-    # ROTATION_DEGREES = 180
-    # ZOOM_SCALE_RANGE = (0.85, 1.15)
-    # BRIGHTNESS_JITTER = 0.15
-    # CONTRAST_JITTER = 0.15
-    # SATURATION_JITTER = 0.15
-    # HUE_JITTER = 0.03
-    # RANDOM_ERASING_P = 0.05
-
+    # Augmentation parameters
     NUM_AUGMENTED_COPIES = int(cfg_dict.get("pp_num_aug_copies", 4))
-
     ROTATION_DEGREES = int(cfg_dict.get("pp_strong_rotation_degrees", 180))
 
     zmin = cfg_dict.get("pp_strong_zoom_min", 0.85)
@@ -123,7 +129,6 @@ def apply_external_config(cfg_dict: dict | None) -> None:
     CONTRAST_JITTER   = float(cfg_dict.get("pp_strong_contrast",   0.15))
     SATURATION_JITTER = float(cfg_dict.get("pp_strong_saturation", 0.15))
     HUE_JITTER        = float(cfg_dict.get("pp_strong_hue",        0.03))
-
     RANDOM_ERASING_P  = float(cfg_dict.get("pp_strong_random_erasing_p", 0.05))
 
 
@@ -412,15 +417,16 @@ def remove_black_rectangle(image, mask):
     # If no good region found, return originals
     return image, mask
 
-def crop_to_mask_bounding_box(image, mask, padding=10):
+def crop_to_mask_bounding_box(image, mask, padding=10, min_size=None):
     """
     Crop image and mask to the bounding box of the mask's non-zero region
-    while maintaining a square shape
+    while maintaining a square shape and respecting minimum size.
     
     Args:
-        image: BGR image (numpy array) - should be square
-        mask: Grayscale mask (numpy array) - should be square
+        image: BGR image (numpy array)
+        mask: Grayscale mask (numpy array)
         padding: Additional padding around the bounding box (default: 10 pixels)
+        min_size: Minimum size for output (default: None, no minimum)
     
     Returns:
         Tuple of (cropped_image, cropped_mask) or None if mask has no non-zero pixels
@@ -450,6 +456,10 @@ def crop_to_mask_bounding_box(image, mask, padding=10):
     
     # Make it square by using the larger dimension
     crop_size = max(crop_w, crop_h)
+    
+    # Enforce minimum size if specified
+    if min_size is not None and crop_size < min_size:
+        crop_size = min_size
     
     # Calculate center of the bounding box
     center_x = (x1 + x2) // 2
@@ -532,14 +542,15 @@ def detect_background_color(image):
     
     return bg_color
 
-def pad_to_square(image, mask):
+def pad_to_square(image, mask, min_size=None):
     """
-    Pad image and mask to square shape by adding borders (no resizing)
-    Centers the image and adds padding with smart background color
+    Pad image and mask to square shape, optionally expanding to minimum size.
+    Centers the image and adds padding with smart background color.
     
     Args:
         image: BGR image (numpy array)
         mask: Grayscale mask (numpy array)
+        min_size: Minimum size for output (expands if needed), None for no minimum
     
     Returns:
         Tuple of (padded_image, padded_mask)
@@ -550,12 +561,16 @@ def pad_to_square(image, mask):
     if len(mask.shape) == 3:
         mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
     
-    # Already square, return as is
-    if h == w:
-        return image.copy(), mask.copy()
-    
-    # Determine the target square size (max of height and width)
+    # Determine the target square size
     target_size = max(h, w)
+    
+    # Expand to minimum size if specified
+    if min_size is not None and target_size < min_size:
+        target_size = min_size
+    
+    # Already square and meets minimum size, return as is
+    if h == w and (min_size is None or h >= min_size):
+        return image.copy(), mask.copy()
     
     # Detect background color from the image
     bg_color = detect_background_color(image)
@@ -574,58 +589,108 @@ def pad_to_square(image, mask):
     
     return square_image, square_mask
 
-def resize_and_normalize_image(image, mask, target_size=384, apply_clahe=True, 
-                               clip_limit=2.0, tile_grid_size=(16, 16)):
+def split_image_into_tiles(image, mask, tile_size=256):
     """
-    Resize image and mask to target size using professional interpolation
-    Simple, direct approach without artifacts
+    Split image and mask into non-overlapping square tiles of specified size.
+    Centers the splitting to maximize coverage.
     
     Args:
         image: BGR image (numpy array)
         mask: Grayscale mask (numpy array)
-        target_size: Target size for output (will be target_size x target_size)
-        apply_clahe: Whether to apply CLAHE for contrast enhancement (optional)
-        clip_limit: CLAHE clip limit parameter
-        tile_grid_size: CLAHE tile grid size parameter
+        tile_size: Size of each tile (default: 256)
     
     Returns:
-        Tuple of (resized_image, resized_mask)
+        List of tuples (tile_image, tile_mask, tile_index) where tile_index is k1, k2, etc.
+        Returns empty list if image is smaller than tile_size
     """
-    # Resize with high-quality Lanczos interpolation (4-lobe)
-    # Best quality for medical images, smooth and artifact-free
-    resized_image = cv2.resize(
-        image, 
-        (target_size, target_size), 
-        interpolation=cv2.INTER_LANCZOS4
-    )
+    h, w = image.shape[:2]
     
-    # Resize mask with nearest neighbor to preserve discrete values
-    resized_mask = cv2.resize(
-        mask, 
-        (target_size, target_size), 
-        interpolation=cv2.INTER_NEAREST
-    )
+    # If image is smaller than tile size, return empty list
+    if h < tile_size or w < tile_size:
+        return []
     
-    # Optional: Apply simple normalization instead of CLAHE
-    if apply_clahe:
-        # Gentle contrast enhancement using simple histogram normalization
-        # Convert to float for processing
-        img_float = resized_image.astype(np.float32)
-        
-        # Normalize each channel to [0, 255] range
-        for i in range(3):
-            channel = img_float[:, :, i]
-            min_val = np.min(channel)
-            max_val = np.max(channel)
+    # Calculate how many tiles we can fit
+    n_tiles_h = h // tile_size
+    n_tiles_w = w // tile_size
+    
+    # Calculate total coverage area
+    total_h = n_tiles_h * tile_size
+    total_w = n_tiles_w * tile_size
+    
+    # Calculate offset to center the tiles
+    offset_h = (h - total_h) // 2
+    offset_w = (w - total_w) // 2
+    
+    tiles = []
+    tile_idx = 1
+    
+    # Extract tiles
+    for i in range(n_tiles_h):
+        for j in range(n_tiles_w):
+            y_start = offset_h + i * tile_size
+            x_start = offset_w + j * tile_size
+            y_end = y_start + tile_size
+            x_end = x_start + tile_size
             
-            # Avoid division by zero
-            if max_val > min_val:
-                # Stretch histogram to full range
-                img_float[:, :, i] = ((channel - min_val) / (max_val - min_val)) * 255.0
-        
-        resized_image = np.clip(img_float, 0, 255).astype(np.uint8)
+            tile_img = image[y_start:y_end, x_start:x_end].copy()
+            tile_mask = mask[y_start:y_end, x_start:x_end].copy()
+            
+            tiles.append((tile_img, tile_mask, f"k{tile_idx}"))
+            tile_idx += 1
     
-    return resized_image, resized_mask
+    return tiles
+
+
+def is_mask_empty(mask):
+    """
+    Check if a mask is completely empty (all zeros)
+    
+    Args:
+        mask: Grayscale mask (numpy array)
+    
+    Returns:
+        True if mask is empty, False otherwise
+    """
+    return not np.any(mask > 0)
+
+
+def get_mask_coverage(mask):
+    """
+    Calculate the percentage of non-zero pixels in a mask
+    
+    Args:
+        mask: Grayscale mask (numpy array)
+    
+    Returns:
+        Percentage of non-zero pixels (0.0 to 1.0)
+    """
+    total_pixels = mask.size
+    non_zero_pixels = np.count_nonzero(mask > 0)
+    return non_zero_pixels / total_pixels if total_pixels > 0 else 0.0
+
+
+def darken_pixels_outside_mask(image, mask, dark_value=0):
+    """
+    Set all pixels in the image that are not in the mask to dark (black)
+    
+    Args:
+        image: BGR image (numpy array)
+        mask: Grayscale mask (numpy array)
+        dark_value: Value to set for pixels outside mask (default: 0 = black)
+    
+    Returns:
+        Image with pixels outside mask darkened
+    """
+    # Create a copy to avoid modifying original
+    darkened_image = image.copy()
+    
+    # Create binary mask (True where mask is non-zero)
+    mask_binary = mask > 0
+    
+    # Set pixels outside mask to dark value
+    darkened_image[~mask_binary] = dark_value
+    
+    return darkened_image
 
 
 def apply_augmentation(image, mask):
@@ -1039,16 +1104,18 @@ def preprocess_dataset():
         print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
     
     # ========================================================================
-    # STEP 3a: Pad images to square shape
+    # STEP 3a: Pad images to square shape (with minimum size expansion)
     # ========================================================================
     if PADDING_SQUARE:
         print_section("Padding Images to Square")
+        print(f"Minimum size: {TARGET_SIZE}x{TARGET_SIZE}")
         
         # Get all image files in the preprocessed directory
         all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
         
         print(f"\nProcessing {len(all_images)} images for padding...")
         padded_count = 0
+        expanded_count = 0
         
         for idx, img_path in enumerate(all_images, 1):
             if idx % 100 == 0:
@@ -1064,22 +1131,30 @@ def preprocess_dataset():
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                 
                 if image is not None and mask is not None:
-                    # Pad to square
-                    padded_image, padded_mask = pad_to_square(image, mask)
+                    h, w = image.shape[:2]
+                    was_small = h < TARGET_SIZE or w < TARGET_SIZE
+                    
+                    # Pad to square with minimum size
+                    padded_image, padded_mask = pad_to_square(image, mask, min_size=TARGET_SIZE)
                     
                     # Overwrite with padded versions
                     cv2.imwrite(str(img_path), padded_image)
                     cv2.imwrite(str(mask_path), padded_mask)
                     padded_count += 1
+                    
+                    if was_small:
+                        expanded_count += 1
         
         print(f"\n✓ Padded {padded_count} images to square shape")
+        print(f"✓ Expanded {expanded_count} images to minimum size {TARGET_SIZE}x{TARGET_SIZE}")
     
     # ========================================================================
-    # STEP 3b: Crop images to mask bounding box
+    # STEP 3b: Crop images to mask bounding box (centered, square)
     # ========================================================================
     if CROP_TO_MASK:
         print_section("Cropping Images to Mask Bounding Box")
         print(f"Padding: {CROP_PADDING} pixels")
+        print(f"Minimum crop size: {TARGET_SIZE}x{TARGET_SIZE}")
         
         # Get all image files in the preprocessed directory
         all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
@@ -1103,14 +1178,14 @@ def preprocess_dataset():
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                 
                 if image is not None and mask is not None:
-                    # Crop to mask bounding box
-                    crop_result = crop_to_mask_bounding_box(image, mask, padding=CROP_PADDING)
+                    # Crop to mask bounding box with minimum size
+                    crop_result = crop_to_mask_bounding_box(image, mask, padding=CROP_PADDING, min_size=TARGET_SIZE)
                     
                     if crop_result is None:
                         # Mask has no non-zero pixels, discard this image
                         discarded_files.append(img_name)
-                        img_path.unlink()  # Delete image
-                        mask_path.unlink()  # Delete mask
+                        img_path.unlink()
+                        mask_path.unlink()
                         discarded_count += 1
                         continue
                     
@@ -1119,8 +1194,8 @@ def preprocess_dataset():
                     # Validate cropped images are not empty
                     if cropped_image.size == 0 or cropped_mask.size == 0:
                         discarded_files.append(img_name)
-                        img_path.unlink()  # Delete image
-                        mask_path.unlink()  # Delete mask
+                        img_path.unlink()
+                        mask_path.unlink()
                         discarded_count += 1
                         continue
                     
@@ -1139,18 +1214,22 @@ def preprocess_dataset():
             print(f"✓ Removed {len(discarded_files)} images with empty masks from labels")
     
     # ========================================================================
-    # STEP 3b: Resize and normalize all images
+    # STEP 3c: Split images into tiles (if larger than TARGET_SIZE)
     # ========================================================================
-    if RESIZE_AND_NORMALIZE:
-        print_section("Resizing and Normalizing Images")
-        print(f"Target size: {TARGET_SIZE}x{TARGET_SIZE}")
-        print(f"CLAHE contrast enhancement: {'Enabled' if APPLY_CLAHE else 'Disabled'}")
+    if SPLIT_INTO_TILES:
+        print_section("Splitting Images into Tiles")
+        print(f"Tile size: {TARGET_SIZE}x{TARGET_SIZE}")
+        print(f"Images smaller than {TARGET_SIZE}x{TARGET_SIZE} will be kept as-is")
         
         # Get all image files in the preprocessed directory
         all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
         
-        print(f"\nProcessing {len(all_images)} images for resizing...")
-        resized_count = 0
+        print(f"\nProcessing {len(all_images)} images for splitting...")
+        split_count = 0
+        tiles_created = 0
+        kept_as_is = 0
+        new_rows = []
+        images_to_remove = []  # Original images that were split
         
         for idx, img_path in enumerate(all_images, 1):
             if idx % 100 == 0:
@@ -1166,24 +1245,193 @@ def preprocess_dataset():
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                 
                 if image is not None and mask is not None:
-                    # Resize image
-                    resized_image, resized_mask = resize_and_normalize_image(
-                        image, mask, 
-                        target_size=TARGET_SIZE,
-                        apply_clahe=APPLY_CLAHE,
-                        clip_limit=CLAHE_CLIP_LIMIT,
-                        tile_grid_size=CLAHE_TILE_GRID_SIZE
-                    )
+                    h, w = image.shape[:2]
                     
-                    # Overwrite with resized versions
-                    cv2.imwrite(str(img_path), resized_image)
-                    cv2.imwrite(str(mask_path), resized_mask)
-                    resized_count += 1
+                    # Only split if image is larger than TARGET_SIZE
+                    if h >= TARGET_SIZE and w >= TARGET_SIZE:
+                        tiles = split_image_into_tiles(image, mask, tile_size=TARGET_SIZE)
+                        
+                        if len(tiles) > 0:
+                            # Get label for this image
+                            row = df_filtered[df_filtered['sample_index'] == img_name]
+                            if not row.empty:
+                                original_label = row['label'].iloc[0]
+                                
+                                # Extract base name (remove img_ prefix and .png suffix)
+                                base_name = img_name.replace('img_', '').replace('.png', '')
+                                
+                                # Save each tile
+                                for tile_img, tile_mask, tile_suffix in tiles:
+                                    tile_img_name = f"img_{base_name}_{tile_suffix}.png"
+                                    tile_mask_name = f"mask_{base_name}_{tile_suffix}.png"
+                                    
+                                    tile_img_path = PP_DATA_DIR / tile_img_name
+                                    tile_mask_path = PP_DATA_DIR / tile_mask_name
+                                    
+                                    cv2.imwrite(str(tile_img_path), tile_img)
+                                    cv2.imwrite(str(tile_mask_path), tile_mask)
+                                    
+                                    # Add to new rows for DataFrame
+                                    new_rows.append({
+                                        'sample_index': tile_img_name,
+                                        'label': original_label
+                                    })
+                                    tiles_created += 1
+                                
+                                # Mark original image for removal
+                                images_to_remove.append(img_name)
+                                img_path.unlink()  # Delete original image
+                                mask_path.unlink()  # Delete original mask
+                                split_count += 1
+                        else:
+                            # Image couldn't be split (smaller than tile_size after check)
+                            kept_as_is += 1
+                    else:
+                        # Image is smaller than TARGET_SIZE, keep as-is
+                        kept_as_is += 1
         
-        print(f"\n✓ Resized and normalized {resized_count} image-mask pairs")
-        if APPLY_CLAHE:
-            print(f"✓ Applied CLAHE contrast enhancement (clip={CLAHE_CLIP_LIMIT}, grid={CLAHE_TILE_GRID_SIZE})")
-        # ========================================================================
+        print(f"\n✓ Split {split_count} large images into {tiles_created} tiles")
+        print(f"✓ Kept {kept_as_is} images as-is (smaller than {TARGET_SIZE}x{TARGET_SIZE})")
+        
+        # Update DataFrame: remove original split images and add new tiles
+        if images_to_remove:
+            df_filtered = df_filtered[~df_filtered['sample_index'].isin(images_to_remove)].copy()
+            print(f"✓ Removed {len(images_to_remove)} original split images from labels")
+        
+        if new_rows:
+            df_tiles = pd.DataFrame(new_rows)
+            df_filtered = pd.concat([df_filtered, df_tiles], ignore_index=True)
+            print(f"✓ Added {len(new_rows)} tile entries to labels")
+    else:
+        print_section("Image Splitting")
+        print("SPLIT_INTO_TILES=False -> skipping image splitting step.")
+    
+    # ========================================================================
+    # STEP 3d: Smart discard - Remove tiles with insufficient mask coverage
+    # ========================================================================
+    if SMART_DISCARD_THRESHOLD > 0:
+        print_section("Smart Discard - Low Mask Coverage")
+        print(f"Minimum mask coverage: {SMART_DISCARD_THRESHOLD*100:.1f}%")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images...")
+        discarded_count = 0
+        discarded_files = []
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read mask
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if mask is not None:
+                    # Calculate mask coverage
+                    coverage = get_mask_coverage(mask)
+                    
+                    # Discard if coverage is below threshold
+                    if coverage < SMART_DISCARD_THRESHOLD:
+                        img_path.unlink()
+                        mask_path.unlink()
+                        discarded_files.append(img_name)
+                        discarded_count += 1
+        
+        print(f"\n✓ Discarded {discarded_count} images with insufficient mask coverage")
+        
+        # Update DataFrame
+        if discarded_files:
+            df_filtered = df_filtered[~df_filtered['sample_index'].isin(discarded_files)].copy()
+            print(f"✓ Removed {len(discarded_files)} entries from labels")
+    
+    # ========================================================================
+    # STEP 3e: Remove images with empty masks
+    # ========================================================================
+    if REMOVE_EMPTY_MASKS:
+        print_section("Removing Images with Empty Masks")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images...")
+        removed_count = 0
+        removed_files = []
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read mask
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if mask is not None:
+                    # Check if mask is empty
+                    if is_mask_empty(mask):
+                        # Remove both image and mask
+                        img_path.unlink()
+                        mask_path.unlink()
+                        removed_files.append(img_name)
+                        removed_count += 1
+        
+        print(f"\n✓ Removed {removed_count} images with empty masks")
+        
+        # Update DataFrame
+        if removed_files:
+            df_filtered = df_filtered[~df_filtered['sample_index'].isin(removed_files)].copy()
+            print(f"✓ Removed {len(removed_files)} entries from labels")
+    else:
+        print_section("Empty Mask Removal")
+        print("REMOVE_EMPTY_MASKS=False -> skipping empty mask removal step.")
+    
+    # ========================================================================
+    # STEP 3f: Darken pixels outside mask
+    # ========================================================================
+    if DARKEN_OUTSIDE_MASK:
+        print_section("Darkening Pixels Outside Mask")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images...")
+        darkened_count = 0
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read image and mask
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    # Darken pixels outside mask
+                    darkened_image = darken_pixels_outside_mask(image, mask)
+                    
+                    # Overwrite with darkened version
+                    cv2.imwrite(str(img_path), darkened_image)
+                    darkened_count += 1
+        
+        print(f"\n✓ Darkened {darkened_count} images (pixels outside mask set to black)")
+    else:
+        print_section("Pixel Darkening")
+        print("DARKEN_OUTSIDE_MASK=False -> skipping pixel darkening step.")
+    # ========================================================================
     # STEP 4: Data Augmentation (Training Set Only)
     # ========================================================================
     if DATA_AUGMENTATION:
@@ -1321,13 +1569,17 @@ def preprocess_dataset():
     if REMOVE_BLACK_RECT and cropped_blacks > 0:
         print(f"  - Black rectangles: {cropped_blacks} images cropped")
     if PADDING_SQUARE:
-        print(f"  - Padding: Images padded to square shape")
+        print(f"  - Padding: Images padded to square shape (min size: {TARGET_SIZE}x{TARGET_SIZE})")
     if CROP_TO_MASK:
-        print(f"  - Cropped: Images cropped to mask bounding boxes (padding={CROP_PADDING}px)")
-    if RESIZE_AND_NORMALIZE:
-        print(f"  - Resized: All images normalized to {TARGET_SIZE}x{TARGET_SIZE}")
-        if APPLY_CLAHE:
-            print(f"  - CLAHE: Contrast enhancement applied (clip={CLAHE_CLIP_LIMIT})")
+        print(f"  - Crop to Mask: Centered square crop with {CROP_PADDING}px padding (min size: {TARGET_SIZE}x{TARGET_SIZE})")
+    if SPLIT_INTO_TILES:
+        print(f"  - Image Splitting: Large images split into {TARGET_SIZE}x{TARGET_SIZE} tiles")
+    if SMART_DISCARD_THRESHOLD > 0:
+        print(f"  - Smart Discard: Tiles with <{SMART_DISCARD_THRESHOLD*100:.1f}% mask coverage removed")
+    if REMOVE_EMPTY_MASKS:
+        print(f"  - Empty Masks: Images with empty masks removed")
+    if DARKEN_OUTSIDE_MASK:
+        print(f"  - Mask Darkening: Pixels outside mask set to black")
     if DATA_AUGMENTATION:
         print(f"  - Augmentation: {NUM_AUGMENTED_COPIES} random augmented copies per image")
     
@@ -1441,16 +1693,18 @@ def preprocess_test_dataset():
         print(f"✗ Could not copy {len(missing_files)} pairs (missing files)")
     
     # ========================================================================
-    # STEP 2a: Pad images to square shape
+    # STEP 2a: Pad images to square shape (with minimum size expansion)
     # ========================================================================
     if PADDING_SQUARE:
         print_section("Padding Images to Square")
+        print(f"Minimum size: {TARGET_SIZE}x{TARGET_SIZE}")
         
         # Get all image files in the preprocessed directory
         all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
         
         print(f"\nProcessing {len(all_images)} images for padding...")
         padded_count = 0
+        expanded_count = 0
         
         for idx, img_path in enumerate(all_images, 1):
             if idx % 100 == 0:
@@ -1466,28 +1720,103 @@ def preprocess_test_dataset():
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                 
                 if image is not None and mask is not None:
-                    # Pad to square
-                    padded_image, padded_mask = pad_to_square(image, mask)
+                    h, w = image.shape[:2]
+                    was_small = h < TARGET_SIZE or w < TARGET_SIZE
+                    
+                    # Pad to square with minimum size
+                    padded_image, padded_mask = pad_to_square(image, mask, min_size=TARGET_SIZE)
                     
                     # Overwrite with padded versions
                     cv2.imwrite(str(img_path), padded_image)
                     cv2.imwrite(str(mask_path), padded_mask)
                     padded_count += 1
+                    
+                    if was_small:
+                        expanded_count += 1
         
         print(f"\n✓ Padded {padded_count} images to square shape")
+        print(f"✓ Expanded {expanded_count} images to minimum size {TARGET_SIZE}x{TARGET_SIZE}")
     
     # ========================================================================
-    # STEP 2b: Crop images to mask bounding box
+    # STEP 2b: Split images into tiles (if larger than TARGET_SIZE)
     # ========================================================================
-    if CROP_TO_MASK:
-        print_section("Cropping Images to Mask Bounding Box")
-        print(f"Padding: {CROP_PADDING} pixels")
+    if SPLIT_INTO_TILES:
+        print_section("Splitting Images into Tiles")
+        print(f"Tile size: {TARGET_SIZE}x{TARGET_SIZE}")
+        print(f"Images smaller than {TARGET_SIZE}x{TARGET_SIZE} will be kept as-is")
         
         # Get all image files in the preprocessed directory
         all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
         
-        print(f"\nProcessing {len(all_images)} images for cropping...")
-        cropped_count = 0
+        print(f"\nProcessing {len(all_images)} images for splitting...")
+        split_count = 0
+        tiles_created = 0
+        kept_as_is = 0
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_TEST_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read image and mask
+                image = cv2.imread(str(img_path))
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if image is not None and mask is not None:
+                    h, w = image.shape[:2]
+                    
+                    # Only split if image is larger than TARGET_SIZE
+                    if h >= TARGET_SIZE and w >= TARGET_SIZE:
+                        tiles = split_image_into_tiles(image, mask, tile_size=TARGET_SIZE)
+                        
+                        if len(tiles) > 0:
+                            # Extract base name (remove img_ prefix and .png suffix)
+                            base_name = img_name.replace('img_', '').replace('.png', '')
+                            
+                            # Save each tile
+                            for tile_img, tile_mask, tile_suffix in tiles:
+                                tile_img_name = f"img_{base_name}_{tile_suffix}.png"
+                                tile_mask_name = f"mask_{base_name}_{tile_suffix}.png"
+                                
+                                tile_img_path = PP_TEST_DATA_DIR / tile_img_name
+                                tile_mask_path = PP_TEST_DATA_DIR / tile_mask_name
+                                
+                                cv2.imwrite(str(tile_img_path), tile_img)
+                                cv2.imwrite(str(tile_mask_path), tile_mask)
+                                
+                                tiles_created += 1
+                            
+                            # Remove original image and mask
+                            img_path.unlink()
+                            mask_path.unlink()
+                            split_count += 1
+                        else:
+                            kept_as_is += 1
+                    else:
+                        # Image is smaller than TARGET_SIZE, keep as-is
+                        kept_as_is += 1
+        
+        print(f"\n✓ Split {split_count} large images into {tiles_created} tiles")
+        print(f"✓ Kept {kept_as_is} images as-is (smaller than {TARGET_SIZE}x{TARGET_SIZE})")
+    else:
+        print_section("Image Splitting")
+        print("SPLIT_INTO_TILES=False -> skipping image splitting step.")
+    
+    # ========================================================================
+    # STEP 2c: Smart discard - Remove tiles with insufficient mask coverage
+    # ========================================================================
+    if SMART_DISCARD_THRESHOLD > 0:
+        print_section("Smart Discard - Low Mask Coverage")
+        print(f"Minimum mask coverage: {SMART_DISCARD_THRESHOLD*100:.1f}%")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images...")
         discarded_count = 0
         
         for idx, img_path in enumerate(all_images, 1):
@@ -1499,52 +1828,69 @@ def preprocess_test_dataset():
             mask_path = PP_TEST_DATA_DIR / mask_name
             
             if img_path.exists() and mask_path.exists():
-                # Read image and mask
-                image = cv2.imread(str(img_path))
+                # Read mask
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                 
-                if image is not None and mask is not None:
-                    # Crop to mask bounding box
-                    crop_result = crop_to_mask_bounding_box(image, mask, padding=CROP_PADDING)
+                if mask is not None:
+                    # Calculate mask coverage
+                    coverage = get_mask_coverage(mask)
                     
-                    if crop_result is None:
-                        # Mask has no non-zero pixels, discard this image
-                        img_path.unlink()  # Delete image
-                        mask_path.unlink()  # Delete mask
+                    # Discard if coverage is below threshold
+                    if coverage < SMART_DISCARD_THRESHOLD:
+                        img_path.unlink()
+                        mask_path.unlink()
                         discarded_count += 1
-                        continue
-                    
-                    cropped_image, cropped_mask = crop_result
-                    
-                    # Validate cropped images are not empty
-                    if cropped_image.size == 0 or cropped_mask.size == 0:
-                        img_path.unlink()  # Delete image
-                        mask_path.unlink()  # Delete mask
-                        discarded_count += 1
-                        continue
-                    
-                    # Overwrite with cropped versions
-                    cv2.imwrite(str(img_path), cropped_image)
-                    cv2.imwrite(str(mask_path), cropped_mask)
-                    cropped_count += 1
         
-        print(f"\n✓ Cropped {cropped_count} images to mask bounding boxes")
-        if discarded_count > 0:
-            print(f"✓ Discarded {discarded_count} test images with empty masks")
+        print(f"\n✓ Discarded {discarded_count} images with insufficient mask coverage")
     
     # ========================================================================
-    # STEP 2c: Resize and normalize all images
+    # STEP 2d: Remove images with empty masks
     # ========================================================================
-    if RESIZE_AND_NORMALIZE:
-        print_section("Resizing and Normalizing Images")
-        print(f"Target size: {TARGET_SIZE}x{TARGET_SIZE}")
-        print(f"CLAHE contrast enhancement: {'Enabled' if APPLY_CLAHE else 'Disabled'}")
+    if REMOVE_EMPTY_MASKS:
+        print_section("Removing Images with Empty Masks")
         
         # Get all image files in the preprocessed directory
         all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
         
-        print(f"\nProcessing {len(all_images)} images for resizing...")
-        resized_count = 0
+        print(f"\nProcessing {len(all_images)} images...")
+        removed_count = 0
+        
+        for idx, img_path in enumerate(all_images, 1):
+            if idx % 100 == 0:
+                print(f"  Progress: {idx}/{len(all_images)}")
+            
+            img_name = img_path.name
+            mask_name = get_mask_filename(img_name)
+            mask_path = PP_TEST_DATA_DIR / mask_name
+            
+            if img_path.exists() and mask_path.exists():
+                # Read mask
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                
+                if mask is not None:
+                    # Check if mask is empty
+                    if is_mask_empty(mask):
+                        # Remove both image and mask
+                        img_path.unlink()
+                        mask_path.unlink()
+                        removed_count += 1
+        
+        print(f"\n✓ Removed {removed_count} images with empty masks")
+    else:
+        print_section("Empty Mask Removal")
+        print("REMOVE_EMPTY_MASKS=False -> skipping empty mask removal step.")
+    
+    # ========================================================================
+    # STEP 2e: Darken pixels outside mask
+    # ========================================================================
+    if DARKEN_OUTSIDE_MASK:
+        print_section("Darkening Pixels Outside Mask")
+        
+        # Get all image files in the preprocessed directory
+        all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        
+        print(f"\nProcessing {len(all_images)} images...")
+        darkened_count = 0
         
         for idx, img_path in enumerate(all_images, 1):
             if idx % 100 == 0:
@@ -1560,24 +1906,17 @@ def preprocess_test_dataset():
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                 
                 if image is not None and mask is not None:
-                    # Resize image
-                    resized_image, resized_mask = resize_and_normalize_image(
-                        image, mask, 
-                        target_size=TARGET_SIZE,
-                        apply_clahe=APPLY_CLAHE,
-                        clip_limit=CLAHE_CLIP_LIMIT,
-                        tile_grid_size=CLAHE_TILE_GRID_SIZE
-                    )
+                    # Darken pixels outside mask
+                    darkened_image = darken_pixels_outside_mask(image, mask)
                     
-                    # Overwrite with resized versions
-                    cv2.imwrite(str(img_path), resized_image)
-                    cv2.imwrite(str(mask_path), resized_mask)
-                    resized_count += 1
+                    # Overwrite with darkened version
+                    cv2.imwrite(str(img_path), darkened_image)
+                    darkened_count += 1
         
-        print(f"\n✓ Resized and normalized {resized_count} image-mask pairs")
-        if APPLY_CLAHE:
-            print(f"✓ Applied CLAHE contrast enhancement (clip={CLAHE_CLIP_LIMIT}, grid={CLAHE_TILE_GRID_SIZE})")
-    
+        print(f"\n✓ Darkened {darkened_count} images (pixels outside mask set to black)")
+    else:
+        print_section("Pixel Darkening")
+        print("DARKEN_OUTSIDE_MASK=False -> skipping pixel darkening step.")
     # ========================================================================
     # SUMMARY
     # ========================================================================
@@ -1588,13 +1927,15 @@ def preprocess_test_dataset():
     if SPLIT_DOUBLES and split_doubles > 0:
         print(f"  - Doubles: {split_doubles} images cropped to valid region (kept non-black masks)")
     if PADDING_SQUARE:
-        print(f"  - Padding: Images padded to square shape")
-    if CROP_TO_MASK:
-        print(f"  - Cropped: Images cropped to mask bounding boxes (padding={CROP_PADDING}px)")
-    if RESIZE_AND_NORMALIZE:
-        print(f"  - Resized: All images normalized to {TARGET_SIZE}x{TARGET_SIZE}")
-        if APPLY_CLAHE:
-            print(f"  - CLAHE: Contrast enhancement applied (clip={CLAHE_CLIP_LIMIT})")
+        print(f"  - Padding: Images padded to square shape (min size: {TARGET_SIZE}x{TARGET_SIZE})")
+    if SPLIT_INTO_TILES:
+        print(f"  - Image Splitting: Large images split into {TARGET_SIZE}x{TARGET_SIZE} tiles")
+    if SMART_DISCARD_THRESHOLD > 0:
+        print(f"  - Smart Discard: Tiles with <{SMART_DISCARD_THRESHOLD*100:.1f}% mask coverage removed")
+    if REMOVE_EMPTY_MASKS:
+        print(f"  - Empty Masks: Images with empty masks removed")
+    if DARKEN_OUTSIDE_MASK:
+        print(f"  - Mask Darkening: Pixels outside mask set to black")
     
     print(f"\nPreprocessed test data saved to: {PP_TEST_DATA_DIR}")
     
