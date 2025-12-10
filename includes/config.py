@@ -594,64 +594,129 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
     #0.2690
     "resnet50_img384_pp_crop_bbox_offaug2_soft": {
-    # ===== Dataset (preprocessing output) =====
-    "train_img_dir": ["pp_train_data"],
-    "test_img_dir": ["pp_test_data"],
-    "labels_csv": ["pp_train_labels.csv"],
+        # ===== Dataset (preprocessing output) =====
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
 
-    # ===== PREPROCESSING CONFIG =====
-    "pp_remove_shrek": [True],
-    "pp_fix_stained": [True],
-    "pp_split_doubles": [True],
-    "pp_remove_black_rect": [True],
-    "pp_padding_square": [False],
-    "pp_crop_to_mask": [False],
-    "pp_resize_and_normalize": [True],
+        # ===== PREPROCESSING CONFIG =====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_resize_and_normalize": [True],
 
-    # offline augmentation più soft
-    "pp_augmentation_enabled": [True],
-    "pp_crop_padding": [10],
-    "pp_target_size": [384],
-    "pp_apply_clahe": [False],
-    "pp_clahe_clip_limit": [2.0],
-    "pp_clahe_tile_grid": [(16, 16)],
+        # offline augmentation più soft
+        "pp_augmentation_enabled": [True],
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_apply_clahe": [False],
+        "pp_clahe_clip_limit": [2.0],
+        "pp_clahe_tile_grid": [(16, 16)],
 
-    # solo 2 copie augmentate
-    "pp_num_aug_copies": [2],
+        # solo 2 copie augmentate
+        "pp_num_aug_copies": [2],
 
-    # aug meno aggressiva
-    "pp_strong_rotation_degrees": [10],
-    "pp_strong_zoom_min": [0.9],
-    "pp_strong_zoom_max": [1.1],
-    "pp_strong_brightness": [0.15],
-    "pp_strong_contrast": [0.15],
-    "pp_strong_saturation": [0.15],
-    "pp_strong_hue": [0.03],
-    "pp_strong_random_erasing_p": [0.05],
+        # aug meno aggressiva
+        "pp_strong_rotation_degrees": [10],
+        "pp_strong_zoom_min": [0.9],
+        "pp_strong_zoom_max": [1.1],
+        "pp_strong_brightness": [0.15],
+        "pp_strong_contrast": [0.15],
+        "pp_strong_saturation": [0.15],
+        "pp_strong_hue": [0.03],
+        "pp_strong_random_erasing_p": [0.05],
 
-    # ===== Esecuzione preprocessing =====
-    "execute": [True],
+        # ===== Esecuzione preprocessing =====
+        "execute": [True],
 
-    # ===== Hyperparam training =====
-    "backbone": ["resnet50"],
-    "img_size": [384],
-    "batch_size": [16],
-    "num_workers": [4],
-    "lr": [1e-4],
-    "weight_decay": [5e-4],    # più regolarizzazione
-    "epochs": [40],            # leggermente meno epoch
-    "use_scheduler": [True],
-    "use_masks": [True],
-    "mask_mode": ["crop_bbox"],
+        # ===== Hyperparam training =====
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [5e-4],    # più regolarizzazione
+        "epochs": [40],            # leggermente meno epoch
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
 
-    # ===== Validation =====
-    "cv_type": ["holdout"],
-    "n_splits": [5],
-    "val_size": [0.2],
-    # appena sistemi il codice, qui metti "train_data"
-    "val_img_dir": ["pp_train_data"],
+        # ===== Validation =====
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "val_size": [0.2],
+        # appena sistemi il codice, qui metti "train_data"
+        "val_img_dir": ["pp_train_data"],
+    },
+
+    # ----- changes in preprocessing ------
+    # removed
+    #       - pp_resize_and_normalize
+    #       - pp_apply_clahe
+    #       - pp_clahe_clip_limit
+    #       - pp_clahe_tile_grid
+    # added:
+    #       - pp_smart_discard_threshold
+    #       - pp_split_into_tiles
+    #       - pp_remove_empty_masks
+    #       - pp_darken_outside_mask
+
+
+    "resnet50_new_preprocessing": {
+        # ===== Dataset (usa output di preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # ==== PREPROCESSING CONFIG (solo UNO per chiave) ====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+
+        "pp_augmentation_enabled": [False],
+
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.8],
+        "pp_strong_zoom_max": [1.0],
+
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        "pp_smart_discard_threshold": [0.05],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [True],
+
+
+        "execute" : [True],
+        # ===== Hyperparam
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+
+        # ===== Validation
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "val_size": [0.2],
+        "val_img_dir": ["pp_train_data"]
+    },
+
 }
-
-#
-}
-
