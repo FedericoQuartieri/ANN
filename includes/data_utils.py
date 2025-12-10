@@ -229,7 +229,6 @@ def get_transforms(cfg: TrainingConfig):
 
     return train_transform, val_transform
 
-
 def create_dataloaders(
     cfg: TrainingConfig,
     train_df: pd.DataFrame,
@@ -241,10 +240,20 @@ def create_dataloaders(
     train_img_dir, _, _ = build_paths(cfg)
 
     base_data_dir = _get_data_root(cfg)
+
+    # directory per le maschere (comune a train/val)
     if cfg.mask_dir is None:
         mask_dir = train_img_dir
     else:
         mask_dir = os.path.join(base_data_dir, cfg.mask_dir)
+
+    # ---------- directory per il validation ----------
+    # 1) se nel config è impostata val_img_dir, usala
+    if getattr(cfg, "val_img_dir", None) is not None:
+        val_img_dir = os.path.join(base_data_dir, cfg.val_img_dir)
+    else:
+        # 2) fallback: stessa directory del train (comportamento attuale)
+        val_img_dir = train_img_dir
 
     train_ds = DoctogresDataset(
         train_df,
@@ -257,13 +266,12 @@ def create_dataloaders(
 
     val_ds = DoctogresDataset(
         val_df,
-        img_dir=train_img_dir,
+        img_dir=val_img_dir,      # <<--- QUI ora può essere diverso
         mask_dir=mask_dir,
         transform=val_transform,
         use_masks=cfg.use_masks,
         mask_mode=cfg.mask_mode,
     )
-
 
     use_pin_memory = torch.cuda.is_available()
 
