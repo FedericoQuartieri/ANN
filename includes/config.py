@@ -476,5 +476,120 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "cv_type": ["holdout"],
         "n_splits": [5],
         "val_size": [0.2]
-    }
+    },
+
+
+    "resnet50_img384_pp_crop_bbox_offaug2_light": {
+        # ===== Dataset (usa output di preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # ==== PREPROCESSING CONFIG (solo UNO per chiave) ====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_resize_and_normalize": [True],
+
+        # >>> offline augmentation attiva, ma leggera <<<
+        "pp_augmentation_enabled": [True],
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_apply_clahe": [False],
+        "pp_clahe_clip_limit": [2.0],
+        "pp_clahe_tile_grid": [(16, 16)],
+
+        # poche copie extra, per non gonfiare troppo il dataset
+        "pp_num_aug_copies": [2],
+
+        # jitter “safe” per istologia
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.9],
+        "pp_strong_zoom_max": [1.1],
+        "pp_strong_brightness": [0.15],
+        "pp_strong_contrast": [0.15],
+        "pp_strong_saturation": [0.15],
+        "pp_strong_hue": [0.03],
+        "pp_strong_random_erasing_p": [0.05],
+
+        "execute": True,
+
+        # ===== Hyperparam training =====
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+
+        # ===== Validation =====
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "val_size": [0.2],
+    },
+
+
+    "resnet50_img384_pp_crop_bbox_offaug4_strong": {
+        # ===== Dataset (usa output di preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # ==== PREPROCESSING CONFIG (solo UNO per chiave) ====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_resize_and_normalize": [True],
+
+        # >>> offline augmentation più forte <<<
+        "pp_augmentation_enabled": [True],
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_apply_clahe": [False],
+        "pp_clahe_clip_limit": [2.0],
+        "pp_clahe_tile_grid": [(16, 16)],
+
+        # più copie augmentate -> dataset 5x circa
+        "pp_num_aug_copies": [4],
+
+        # aug un filo più aggressiva
+        "pp_strong_rotation_degrees": [20],
+        "pp_strong_zoom_min": [0.85],
+        "pp_strong_zoom_max": [1.15],
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        "execute": True,
+
+        # ===== Hyperparam training =====
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],          # per ora lascerei invariato
+        "weight_decay": [1e-4],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+
+        # ===== Validation =====
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "val_size": [0.2],
+    },
+
 }
