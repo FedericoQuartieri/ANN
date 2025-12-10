@@ -147,6 +147,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     # (usa direttamente train_data / test_data / train_labels.csv)
     # ----------------------------------------------------------------------
     
+    # 0.1865
     "resnet50_img384": {
         # ===== Dataset (raw)
         "train_img_dir": ["train_data"],
@@ -179,6 +180,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     # (usa pp_train_data / pp_test_data / pp_train_labels.csv)
     # ----------------------------------------------------------------------
 
+    # test: 0.0246
     "resnet50_img384_preprocessing": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -421,5 +423,58 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "cv_type": ["kfold"],
         "n_splits": [5],
         "val_size": [0.2],               # ignorata per kfold, la lasciamo per compatibilità
+    },
+
+    # 0.2921
+    "resnet50_img384_preprocessing_crop_bbox": {
+        # ===== Dataset (usa output di preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # ==== PREPROCESSING CONFIG (solo UNO per chiave) ====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_resize_and_normalize": [True],
+
+        "pp_augmentation_enabled": [False],
+
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_apply_clahe": [False],
+        "pp_clahe_clip_limit": [2.0],
+        "pp_clahe_tile_grid": [(16, 16)],
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.8],
+        "pp_strong_zoom_max": [1.0],
+
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+
+        "execute" : True,
+        # ===== Hyperparam
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+
+        # ===== Validation
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "val_size": [0.2]
     }
 }
