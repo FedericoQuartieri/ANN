@@ -87,8 +87,12 @@ def train_one_epoch(
     device: torch.device,
     epoch: int | None = None,
     num_epochs: int | None = None,
+    use_amp: bool = True,
 ) -> Tuple[float, float]:
-    """Train model for one epoch (con progress bar stile Keras).
+    """Train model for one epoch with optional mixed-precision training.
+
+    Args:
+        use_amp: Enable automatic mixed precision (float16). Recommended for modern GPUs.
 
     Ritorna:
         epoch_loss, epoch_f1_macro
@@ -99,6 +103,9 @@ def train_one_epoch(
 
     all_labels = []
     all_preds = []
+
+    # Mixed-precision training setup
+    scaler = torch.amp.GradScaler('cuda') if use_amp and device.type == 'cuda' else None
 
     # Descrizione per la barra
     if epoch is not None and num_epochs is not None:
@@ -124,12 +131,25 @@ def train_one_epoch(
 
         optimizer.zero_grad()
 
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        _, preds = torch.max(outputs, dim=1)
-
-        loss.backward()
-        optimizer.step()
+        # Mixed-precision forward pass
+        if scaler is not None:
+            with torch.amp.autocast('cuda'):
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+            _, preds = torch.max(outputs, dim=1)
+            
+            # Scaled backward pass
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            # Standard float32 training
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            _, preds = torch.max(outputs, dim=1)
+            
+            loss.backward()
+            optimizer.step()
 
         # accumulo per loss
         running_loss += loss.item() * images.size(0)
@@ -247,6 +267,14 @@ def train_model(
         "val_acc": [],
     }
 
+    # Mixed precision from config (default: auto-enable on CUDA)
+    use_amp = getattr(cfg, 'use_amp', device.type == 'cuda')
+    if use_amp and device.type == 'cuda':
+        print("✓ Mixed-precision training (AMP) enabled - using float16 for faster training")
+    elif use_amp and device.type != 'cuda':
+        print("⚠ use_amp=True but device is CPU - disabling AMP")
+        use_amp = False
+    
     for epoch in range(1, cfg.epochs + 1):
         print("\n--------------------------------------------------------------")
         print(f"[Epoch {epoch}/{cfg.epochs}]")
@@ -260,6 +288,7 @@ def train_model(
             device,
             epoch=epoch,
             num_epochs=cfg.epochs,
+            use_amp=use_amp,
         )
         val_loss, val_f1, val_true, val_pred = evaluate(
             model, val_loader, criterion, device
