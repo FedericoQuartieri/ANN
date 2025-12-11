@@ -974,7 +974,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
         # ===== Validation
         "cv_type": ["kfold"],
-        "n_splits": [5],
+        "n_splits": [4],
         "val_size": [0.2],
     },
 
