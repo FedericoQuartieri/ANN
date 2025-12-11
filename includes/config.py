@@ -126,6 +126,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_scheduler": [True],
         "use_masks": [True],
         "mask_mode": ["multiply"],
+        "use_amp": [True],  # Mixed-precision training (float16)
 
         "cv_type": ["holdout"],
         "n_splits": [5],
@@ -160,6 +161,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_scheduler": [True],
         "use_masks": [True],
         "mask_mode": ["multiply"],
+        "use_amp": [True],  # Mixed-precision training (float16)
 
         # ===== Validation
         "cv_type": ["holdout"],
@@ -219,6 +221,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_scheduler": [True],
         "use_masks": [True],
         "mask_mode": ["multiply"],
+        "use_amp": [True],  # Mixed-precision training (float16)
 
         # ===== Validation
         "cv_type": ["holdout"],
@@ -286,6 +289,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_scheduler": [True],
         "use_masks": [True],
         "mask_mode": ["multiply"],
+        "use_amp": [True],  # Mixed-precision training (float16)
 
         # ===== Validation =====
         "cv_type": ["holdout"],
@@ -353,6 +357,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_scheduler": [True],
         "use_masks": [True],
         "mask_mode": ["multiply"],
+        "use_amp": [True],  # Mixed-precision training (float16)
 
         # ===== Validation =====
         "cv_type": ["holdout"],
@@ -414,6 +419,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
         "use_masks": [True],             # sempre usa le maschere
         "mask_mode": ["multiply"],   # 2 opzioni -> 6 combo totali
+        "use_amp": [True],  # Mixed-precision training (float16)
 
         # ===== Validation: 5-fold CV =====
         "cv_type": ["kfold"],
@@ -422,110 +428,119 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "val_img_dir": ["pp_train_data"]
     },
 
-    # 0.2921
-    "resnet50_img384_preprocessing_crop_bbox": {
-        # ===== Dataset (usa output di preprocessing.py)
-        "train_img_dir": ["pp_train_data"],
-        "test_img_dir": ["pp_test_data"],
-        "labels_csv": ["pp_train_labels.csv"],
+    #f1 = 0.2578
+    "resnet50_kfold_cropbbox_30ep": {
+    # ===== Dataset (usa output di preprocessing.py)
+    "train_img_dir": ["pp_train_data"],
+    "test_img_dir": ["pp_test_data"],
+    "labels_csv": ["pp_train_labels.csv"],
 
-        # ==== PREPROCESSING CONFIG (solo UNO per chiave) ====
-        "pp_remove_shrek": [True],
-        "pp_fix_stained": [True],
-        "pp_split_doubles": [True],
-        "pp_remove_black_rect": [True],
-        "pp_padding_square": [False],
-        "pp_crop_to_mask": [False],
-        "pp_resize_and_normalize": [True],
+    # ===== Preprocessing offline: solo cleaning / resize =====
+    "pp_remove_shrek": [True],
+    "pp_fix_stained": [True],
+    "pp_split_doubles": [True],
+    "pp_remove_black_rect": [True],
+    "pp_padding_square": [False],
+    "pp_crop_to_mask": [False],
+    "pp_resize_and_normalize": [True],
 
-        "pp_augmentation_enabled": [False],
+    # NO augmentation offline
+    "pp_augmentation_enabled": [False],
 
-        "pp_crop_padding": [10],
-        "pp_target_size": [384],
-        "pp_apply_clahe": [False],
-        "pp_clahe_clip_limit": [2.0],
-        "pp_clahe_tile_grid": [(16, 16)],
-        "pp_strong_rotation_degrees": [15],
-        "pp_strong_zoom_min": [0.8],
-        "pp_strong_zoom_max": [1.0],
+    "pp_crop_padding": [10],
+    "pp_target_size": [384],
+    "pp_apply_clahe": [False],
+    "pp_clahe_clip_limit": [2.0],
+    "pp_clahe_tile_grid": [(16, 16)],
 
-        "pp_strong_brightness": [0.2],
-        "pp_strong_contrast": [0.2],
-        "pp_strong_saturation": [0.2],
-        "pp_strong_hue": [0.05],
-        "pp_strong_random_erasing_p": [0.1],
+    # Ignorati perché pp_augmentation_enabled = False
+    "pp_num_aug_copies": [1],
+    "pp_strong_rotation_degrees": [15],
+    "pp_strong_zoom_min": [0.9],
+    "pp_strong_zoom_max": [1.1],
+    "pp_strong_brightness": [0.2],
+    "pp_strong_contrast": [0.2],
+    "pp_strong_saturation": [0.2],
+    "pp_strong_hue": [0.05],
+    "pp_strong_random_erasing_p": [0.1],
 
+    # ===== Esecuzione =====
+    "execute": True,
 
-        "execute" : [True],
-        # ===== Hyperparam
-        "backbone": ["resnet50"],
-        "img_size": [384],
-        "batch_size": [16],
-        "num_workers": [4],
-        "lr": [1e-4],
-        "weight_decay": [1e-4],
-        "epochs": [50],
-        "use_scheduler": [True],
-        "use_masks": [True],
-        "mask_mode": ["crop_bbox"],
+    # ===== Hyperparameters (UNA SOLA CONFIG) =====
+    "backbone": ["resnet50"],
+    "img_size": [384],
+    "batch_size": [16],
+    "num_workers": [4],
+    "lr": [3e-4],
+    "weight_decay": [1e-3],
+    "epochs": [30],              # <<< 30 epochs
+    "use_scheduler": [True],
 
-        # ===== Validation
-        "cv_type": ["holdout"],
-        "n_splits": [5],
-        "val_size": [0.2],
-        "val_img_dir": ["pp_train_data"]
+    "use_masks": [True],
+    "mask_mode": ["crop_bbox"],  # fisso
+    "use_amp": [True],  # Mixed-precision training (float16)
+
+    # ===== Validation: 5-fold CV =====
+    "cv_type": ["kfold"],
+    "n_splits": [5],
+    "val_size": [0.2],           # ignorata per kfold, ok
     },
 
+    # Configurazione ottimizzata basata su resnet50_kfold_cropbbox_30ep (F1=0.2578)
+    # Differenze: holdout invece di kfold + mixed-precision + batch_size aumentato
+    "resnet50_cropbbox_30ep_holdout_amp": {
+    # ===== Dataset (usa output di preprocessing.py)
+    "train_img_dir": ["pp_train_data"],
+    "test_img_dir": ["pp_test_data"],
+    "labels_csv": ["pp_train_labels.csv"],
 
-    "resnet50_img384_pp_crop_bbox_offaug2_light": {
-        # ===== Dataset (usa output di preprocessing.py)
-        "train_img_dir": ["pp_train_data"],
-        "test_img_dir": ["pp_test_data"],
-        "labels_csv": ["pp_train_labels.csv"],
+    # ===== Preprocessing offline: solo cleaning / resize =====
+    "pp_remove_shrek": [True],
+    "pp_fix_stained": [True],
+    "pp_split_doubles": [True],
+    "pp_remove_black_rect": [True],
+    "pp_padding_square": [False],
+    "pp_crop_to_mask": [False],
+    "pp_resize_and_normalize": [True],
 
-        # ==== PREPROCESSING CONFIG (solo UNO per chiave) ====
-        "pp_remove_shrek": [True],
-        "pp_fix_stained": [True],
-        "pp_split_doubles": [True],
-        "pp_remove_black_rect": [True],
-        "pp_padding_square": [False],
-        "pp_crop_to_mask": [False],
-        "pp_resize_and_normalize": [True],
+    # NO augmentation offline
+    "pp_augmentation_enabled": [False],
 
-        # >>> offline augmentation attiva, ma leggera <<<
-        "pp_augmentation_enabled": [True],
-        "pp_crop_padding": [10],
-        "pp_target_size": [384],
-        "pp_apply_clahe": [False],
-        "pp_clahe_clip_limit": [2.0],
-        "pp_clahe_tile_grid": [(16, 16)],
+    "pp_crop_padding": [10],
+    "pp_target_size": [384],
+    "pp_apply_clahe": [False],
+    "pp_clahe_clip_limit": [2.0],
+    "pp_clahe_tile_grid": [(16, 16)],
 
-        # poche copie extra, per non gonfiare troppo il dataset
-        "pp_num_aug_copies": [2],
+    # Ignorati perché pp_augmentation_enabled = False
+    "pp_num_aug_copies": [1],
+    "pp_strong_rotation_degrees": [15],
+    "pp_strong_zoom_min": [0.9],
+    "pp_strong_zoom_max": [1.1],
+    "pp_strong_brightness": [0.2],
+    "pp_strong_contrast": [0.2],
+    "pp_strong_saturation": [0.2],
+    "pp_strong_hue": [0.05],
+    "pp_strong_random_erasing_p": [0.1],
 
-        # jitter “safe” per istologia
-        "pp_strong_rotation_degrees": [15],
-        "pp_strong_zoom_min": [0.9],
-        "pp_strong_zoom_max": [1.1],
-        "pp_strong_brightness": [0.15],
-        "pp_strong_contrast": [0.15],
-        "pp_strong_saturation": [0.15],
-        "pp_strong_hue": [0.03],
-        "pp_strong_random_erasing_p": [0.05],
+    # ===== Esecuzione =====
+    "execute": True,
 
-        "execute": [True],
+    # ===== Hyperparameters =====
+    "backbone": ["resnet50"],
+    "img_size": [384],
+    "batch_size": [24],          # Aumentato da 16 grazie a mixed-precision
+    "num_workers": [6],           # Aumentato per saturare GPU
+    "lr": [3e-4],                 # Same as best kfold config
+    "weight_decay": [1e-3],       # Same as best kfold config
+    "epochs": [30],               
+    "use_scheduler": [True],
+    "label_smoothing": [0.05],    # Label smoothing leggero per ridurre overconfidence
 
-        # ===== Hyperparam training =====
-        "backbone": ["resnet50"],
-        "img_size": [384],
-        "batch_size": [16],
-        "num_workers": [4],
-        "lr": [1e-4],
-        "weight_decay": [1e-4],
-        "epochs": [50],
-        "use_scheduler": [True],
-        "use_masks": [True],
-        "mask_mode": ["crop_bbox"],
+    "use_masks": [True],
+    "mask_mode": ["crop_bbox"],   # Best performing mode (da kfold test)
+    "use_amp": [True],            # Mixed-precision training (2-3x più veloce)
 
         # ===== Validation =====
         "cv_type": ["holdout"],
@@ -717,6 +732,74 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "n_splits": [5],
         "val_size": [0.2],
         "val_img_dir": ["pp_train_data"]
+    },
+
+    # Grid search per ottimizzare lr e weight_decay
+    # Best config da provare dopo sweep: lr=1e-4, wd=1e-3 o 5e-3
+    "resnet50_kfold_50ep_gridsearch": {
+        # ===== Dataset (preprocessing già fatto, NO augmentation offline)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # ===== Preprocessing: solo cleaning, NO aug offline
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_resize_and_normalize": [True],
+
+        "pp_augmentation_enabled": [False],
+
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_apply_clahe": [False],
+        "pp_clahe_clip_limit": [2.0],
+        "pp_clahe_tile_grid": [(16, 16)],
+
+        "pp_num_aug_copies": [1],
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.9],
+        "pp_strong_zoom_max": [1.1],
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        # NO splitting in tiles (mantieni immagini intere)
+        "pp_split_into_tiles": [False],
+        "pp_remove_empty_masks": [False],
+        "pp_darken_outside_mask": [False],
+        "pp_smart_discard_threshold": [0.05],
+
+        # ===== Esecuzione =====
+        "execute": [True],
+
+        # ===== GRID SEARCH: lr × weight_decay =====
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        
+        # Sweep su learning rate (3 valori)
+        "lr": [5e-5, 1e-4, 3e-4],
+        
+        # Sweep su weight_decay (2 valori) -> 3×2 = 6 configurazioni
+        "weight_decay": [1e-3, 5e-3],
+        
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+        "use_amp": [True],
+
+        # ===== 5-fold CV per robustezza =====
+        "cv_type": ["kfold"],
+        "n_splits": [5],
+        "val_size": [0.2],
     },
 
 }
