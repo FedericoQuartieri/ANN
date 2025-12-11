@@ -1807,78 +1807,109 @@ def preprocess_test_dataset():
         print("SPLIT_INTO_TILES=False -> skipping image splitting step.")
     
     # ========================================================================
-    # STEP 2c: Smart discard - Remove tiles with insufficient mask coverage
+    # STEP 2c: Smart discard for test set - Keep at least one tile per original image
     # ========================================================================
-    if SMART_DISCARD_THRESHOLD > 0:
-        print_section("Smart Discard - Low Mask Coverage")
-        print(f"Minimum mask coverage: {SMART_DISCARD_THRESHOLD*100:.1f}%")
+    # For test set:
+    # - If any tile meets the threshold, apply threshold to all tiles
+    # - If no tile meets threshold, keep only the best tile (highest coverage)
+    # This ensures each original image has at least one tile in output
+    print_section("Smart Discard - Test Set (Smart Threshold with Fallback)")
+    print(f"Threshold: {SMART_DISCARD_THRESHOLD*100:.1f}%")
+    print(f"Strategy: Apply threshold if possible, otherwise keep best tile per image")
+    
+    # Get all image files in the preprocessed directory
+    all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+    
+    # Group tiles by original image name
+    from collections import defaultdict
+    tiles_by_original = defaultdict(list)
+    
+    for img_path in all_images:
+        img_name = img_path.name
+        # Extract original image name (before any _k1, _k2 suffixes)
+        # Format: img_XXXXX.png or img_XXXXX_k1.png
+        base_name = img_name.replace('img_', '').replace('.png', '')
+        # Remove tile suffix if present (_k1, _k2, etc.)
+        if '_k' in base_name:
+            original_name = base_name.rsplit('_k', 1)[0]
+        else:
+            original_name = base_name
         
-        # Get all image files in the preprocessed directory
-        all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+        tiles_by_original[original_name].append(img_path)
+    
+    print(f"\nFound {len(tiles_by_original)} original images with {len(all_images)} total tiles")
+    
+    discarded_count = 0
+    kept_per_image = {}
+    test_threshold = 0.0  # For test set, use threshold 0 (only keep non-empty)
+    
+    for original_name, tile_paths in tiles_by_original.items():
+        if len(tile_paths) % 100 == 0:
+            print(f"  Progress: {len(kept_per_image)}/{len(tiles_by_original)}")
         
-        print(f"\nProcessing {len(all_images)} images...")
-        discarded_count = 0
-        
-        for idx, img_path in enumerate(all_images, 1):
-            if idx % 100 == 0:
-                print(f"  Progress: {idx}/{len(all_images)}")
-            
-            img_name = img_path.name
-            mask_name = get_mask_filename(img_name)
+        # Calculate mask coverage for each tile
+        tile_coverages = []
+        for img_path in tile_paths:
+            mask_name = get_mask_filename(img_path.name)
             mask_path = PP_TEST_DATA_DIR / mask_name
             
-            if img_path.exists() and mask_path.exists():
-                # Read mask
+            if mask_path.exists():
                 mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-                
                 if mask is not None:
-                    # Calculate mask coverage
                     coverage = get_mask_coverage(mask)
-                    
-                    # Discard if coverage is below threshold
-                    if coverage < SMART_DISCARD_THRESHOLD:
-                        img_path.unlink()
-                        mask_path.unlink()
-                        discarded_count += 1
+                    tile_coverages.append((img_path, mask_path, coverage))
         
-        print(f"\n✓ Discarded {discarded_count} images with insufficient mask coverage")
+        if not tile_coverages:
+            continue
+        
+        # Sort tiles by coverage (descending)
+        tile_coverages.sort(key=lambda x: x[2], reverse=True)
+        
+        # Check if any tile meets the threshold
+        has_good_tile = any(coverage >= SMART_DISCARD_THRESHOLD for _, _, coverage in tile_coverages)
+        
+        kept_count = 0
+        if has_good_tile:
+            # At least one tile meets threshold - apply threshold to all
+            for img_path, mask_path, coverage in tile_coverages:
+                if coverage >= SMART_DISCARD_THRESHOLD:
+                    kept_count += 1
+                else:
+                    # Discard tiles below threshold
+                    img_path.unlink()
+                    mask_path.unlink()
+                    discarded_count += 1
+        else:
+            # No tile meets threshold - keep only the best one (highest coverage)
+            best_img, best_mask, best_coverage = tile_coverages[0]
+            kept_count = 1
+            # Discard all others
+            for img_path, mask_path, coverage in tile_coverages[1:]:
+                img_path.unlink()
+                mask_path.unlink()
+                discarded_count += 1
+        
+        kept_per_image[original_name] = kept_count
+    
+    total_kept = sum(kept_per_image.values())
+    images_with_single_tile = sum(1 for count in kept_per_image.values() if count == 1)
+    images_with_multiple_tiles = len(tiles_by_original) - images_with_single_tile
+    
+    print(f"\n✓ Kept {total_kept} tiles from {len(tiles_by_original)} original images")
+    print(f"✓ Discarded {discarded_count} tiles below threshold")
+    print(f"✓ {images_with_single_tile} original images have exactly 1 tile")
+    print(f"✓ {images_with_multiple_tiles} original images have multiple tiles (all met threshold)")
+    print(f"✓ Every original test image guaranteed to have at least one tile in output")
     
     # ========================================================================
-    # STEP 2d: Remove images with empty masks
+    # STEP 2d: Note about empty masks
     # ========================================================================
-    if REMOVE_EMPTY_MASKS:
-        print_section("Removing Images with Empty Masks")
-        
-        # Get all image files in the preprocessed directory
-        all_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
-        
-        print(f"\nProcessing {len(all_images)} images...")
-        removed_count = 0
-        
-        for idx, img_path in enumerate(all_images, 1):
-            if idx % 100 == 0:
-                print(f"  Progress: {idx}/{len(all_images)}")
-            
-            img_name = img_path.name
-            mask_name = get_mask_filename(img_name)
-            mask_path = PP_TEST_DATA_DIR / mask_name
-            
-            if img_path.exists() and mask_path.exists():
-                # Read mask
-                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-                
-                if mask is not None:
-                    # Check if mask is empty
-                    if is_mask_empty(mask):
-                        # Remove both image and mask
-                        img_path.unlink()
-                        mask_path.unlink()
-                        removed_count += 1
-        
-        print(f"\n✓ Removed {removed_count} images with empty masks")
-    else:
-        print_section("Empty Mask Removal")
-        print("REMOVE_EMPTY_MASKS=False -> skipping empty mask removal step.")
+    # For test set, we don't remove images with empty masks here
+    # because the smart discard step above already ensures at least one tile
+    # per original image is kept (even if it has an empty mask)
+    print_section("Empty Mask Handling - Test Set")
+    print("✓ Test set keeps at least one tile per original image")
+    print("✓ Empty masks are handled by the smart discard step above")
     
     # ========================================================================
     # STEP 2e: Darken pixels outside mask
@@ -1921,7 +1952,11 @@ def preprocess_test_dataset():
     # SUMMARY
     # ========================================================================
     print_section("Test Preprocessing Summary")
-    print(f"Total test images processed: {copied_pairs}")
+    
+    # Count final output
+    final_images = sorted([f for f in PP_TEST_DATA_DIR.iterdir() if f.name.startswith('img_')])
+    print(f"Total test images in output: {len(final_images)}")
+    print(f"Original test images processed: {copied_pairs}")
     
     print("\nPreprocessing steps applied:")
     if SPLIT_DOUBLES and split_doubles > 0:
@@ -1930,10 +1965,8 @@ def preprocess_test_dataset():
         print(f"  - Padding: Images padded to square shape (min size: {TARGET_SIZE}x{TARGET_SIZE})")
     if SPLIT_INTO_TILES:
         print(f"  - Image Splitting: Large images split into {TARGET_SIZE}x{TARGET_SIZE} tiles")
-    if SMART_DISCARD_THRESHOLD > 0:
-        print(f"  - Smart Discard: Tiles with <{SMART_DISCARD_THRESHOLD*100:.1f}% mask coverage removed")
-    if REMOVE_EMPTY_MASKS:
-        print(f"  - Empty Masks: Images with empty masks removed")
+    print(f"  - Smart Discard: Threshold {SMART_DISCARD_THRESHOLD*100:.1f}% with fallback to best tile")
+    print(f"  - Guarantee: Each original image has at least one tile in output")
     if DARKEN_OUTSIDE_MASK:
         print(f"  - Mask Darkening: Pixels outside mask set to black")
     
