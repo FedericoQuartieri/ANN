@@ -85,39 +85,43 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
   
 
     "test": {
+        # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
 
+        # ==== PREPROCESSING CONFIG (solo UNO per chiave) ====
         "pp_remove_shrek": [True],
         "pp_fix_stained": [True],
         "pp_split_doubles": [True],
         "pp_remove_black_rect": [True],
-        "pp_padding_square": [True],
-        "pp_crop_to_mask": [True],
-        "pp_split_into_tiles": [True],
-        "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [True],
-        "pp_augmentation_enabled": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
 
-        "pp_target_size": [256],
+        "pp_augmentation_enabled": [False],
+
         "pp_crop_padding": [10],
-        "pp_smart_discard_threshold": [0.01],
-        "pp_num_aug_copies": [1],
+        "pp_target_size": [384],
         "pp_strong_rotation_degrees": [15],
         "pp_strong_zoom_min": [0.8],
         "pp_strong_zoom_max": [1.0],
+
         "pp_strong_brightness": [0.2],
         "pp_strong_contrast": [0.2],
         "pp_strong_saturation": [0.2],
         "pp_strong_hue": [0.05],
         "pp_strong_random_erasing_p": [0.1],
 
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [True],
+
 
         "execute" : [True],
         # ===== Hyperparam
         "backbone": ["resnet50"],
-        "img_size": [256],
+        "img_size": [384],
         "batch_size": [16],
         "num_workers": [4],
         "lr": [1e-4],
@@ -125,9 +129,9 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "epochs": [1],
         "use_scheduler": [True],
         "use_masks": [True],
-        "mask_mode": ["multiply"],
-        "use_amp": [True],  # Mixed-precision training (float16)
+        "mask_mode": ["crop_bbox"],
 
+        # ===== Validation
         "cv_type": ["holdout"],
         "n_splits": [5],
         "val_size": [0.2],
@@ -708,7 +712,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_strong_hue": [0.05],
         "pp_strong_random_erasing_p": [0.1],
 
-        "pp_smart_discard_threshold": [0.05],
+        "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
         "pp_darken_outside_mask": [True],

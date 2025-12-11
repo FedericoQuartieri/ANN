@@ -136,20 +136,26 @@ def train_one_epoch(
             with torch.amp.autocast('cuda'):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
-            _, preds = torch.max(outputs, dim=1)
             
             # Scaled backward pass
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            
+            # Compute predictions AFTER autocast (use float32 for stability)
+            with torch.no_grad():
+                _, preds = torch.max(outputs.float(), dim=1)
         else:
             # Standard float32 training
             outputs = model(images)
             loss = criterion(outputs, labels)
-            _, preds = torch.max(outputs, dim=1)
             
             loss.backward()
             optimizer.step()
+            
+            # Compute predictions
+            with torch.no_grad():
+                _, preds = torch.max(outputs, dim=1)
 
         # accumulo per loss
         running_loss += loss.item() * images.size(0)
