@@ -1,6 +1,7 @@
 # includes/data_utils.py
 
 import os
+import re
 from typing import Tuple, Dict, List, Optional
 
 import numpy as np
@@ -11,8 +12,13 @@ from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+
 from .config import TrainingConfig
 
+
+# ---------------------------------------------------------------------
+# PATH UTILS
+# ---------------------------------------------------------------------
 
 def _get_data_root(cfg: TrainingConfig) -> str:
     """Return the base directory that contains train_data, test_data, train_labels.csv."""
@@ -29,6 +35,10 @@ def build_paths(cfg: TrainingConfig) -> Tuple[str, str, str]:
     labels_path = os.path.join(base, cfg.labels_csv)
     return train_img_dir, test_img_dir, labels_path
 
+
+# ---------------------------------------------------------------------
+# LABELS: FULL LOAD (per KFold) E NUOVO SPLIT PREPROCESSED
+# ---------------------------------------------------------------------
 
 def load_full_labels(
     cfg: TrainingConfig,
@@ -57,26 +67,124 @@ def load_full_labels(
     return labels_df, unique_labels, label_to_idx, idx_to_label
 
 
-def load_labels_and_split(
-    cfg: TrainingConfig,
-) -> Tuple[pd.DataFrame, pd.DataFrame, List[str], Dict[str, int], Dict[int, str]]:
-    """Load labels and perform a single stratified train/validation split."""
-    labels_df, unique_labels, label_to_idx, idx_to_label = load_full_labels(cfg)
+def _parse_ids(sample_name: str) -> Tuple[str, str, bool]:
+    """
+    Parse sample_index like:
+        img_0002_k6.png
+        img_0002_k6_aug0.png
 
-    # Train/val split (hold-out)
-    train_df, val_df = train_test_split(
-        labels_df,
-        test_size=cfg.val_size,
-        random_state=cfg.random_seed,
-        stratify=labels_df["label_idx"],
+    Returns:
+        case_id: "img_0002"      (patient / big image id)
+        tile_id: "img_0002_k6"   (patch id, without _aug...)
+        is_aug:  True if *_augX*.png
+    """
+    name, _ = os.path.splitext(sample_name)          # remove .png
+    is_aug = "_aug" in name
+    base = name.split("_aug")[0]                     # drop _augX if present
+    parts = base.split("_")                          # ["img", "0002", "k6"]
+
+    if len(parts) >= 3:
+        case_id = f"{parts[0]}_{parts[1]}"              # "img_0002"
+        tile_id = f"{parts[0]}_{parts[1]}_{parts[2]}"   # "img_0002_k6"
+    elif len(parts) >= 2:
+        case_id = f"{parts[0]}_{parts[1]}"
+        tile_id = base
+    else:
+        case_id = base
+        tile_id = base
+    return case_id, tile_id, is_aug
+
+
+def load_labels_and_split(cfg: TrainingConfig):
+    """
+    Load labels CSV and split into train/val using ONLY preprocessed data.
+
+    Regole:
+    - Train e val usano la STESSA cartella immagini: cfg.train_img_dir
+      (tipicamente 'pp_train_data').
+    - Validation usa solo immagini non-augmentate (nessun '_aug').
+    - Se un case_id (img_XXXX) va in validation, TUTTE le sue tile
+      (aug + non-aug) vengono tolte dal training.
+    - val_size è calcolata sul numero di immagini NON-aug.
+
+    Ritorna:
+        train_df, val_df, unique_labels, label_to_idx, idx_to_label
+    """
+    train_img_dir, _, labels_csv_path = build_paths(cfg)  # train_img_dir non serve esplicitamente qui
+
+    df = pd.read_csv(labels_csv_path)
+    if "sample_index" not in df.columns or "label" not in df.columns:
+        raise ValueError("Expected columns 'sample_index' and 'label' in labels CSV.")
+
+    # Parse ids
+    parsed = df["sample_index"].apply(_parse_ids)
+    df["case_id"] = parsed.apply(lambda x: x[0])
+    df["tile_id"] = parsed.apply(lambda x: x[1])
+    df["is_aug"] = parsed.apply(lambda x: x[2])
+
+    # Encode labels
+    unique_labels: List[str] = sorted(df["label"].unique())
+    label_to_idx: Dict[str, int] = {lab: i for i, lab in enumerate(unique_labels)}
+    idx_to_label: Dict[int, str] = {i: lab for lab, i in label_to_idx.items()}
+    df["label_idx"] = df["label"].map(label_to_idx)
+
+    # ---- Candidate set for validation: ONLY non-aug tiles ----
+    non_aug = df[~df["is_aug"]].copy()
+    if non_aug.empty:
+        raise RuntimeError("No non-augmented samples found (no rows without '_aug').")
+
+    # Compute one label per case_id (first tile label, they should all agree)
+    case_labels = (
+        non_aug.groupby("case_id")["label_idx"]
+        .first()
+        .reset_index()
     )
+
+    # Stratified split on case_id, counting val_size on NON-aug samples
+    val_size = getattr(cfg, "val_size", 0.2)
+    if not (0.0 < val_size < 1.0):
+        raise ValueError(f"cfg.val_size must be in (0,1), got {val_size}")
+
+    train_cases, val_cases = train_test_split(
+        case_labels["case_id"],
+        test_size=val_size,
+        stratify=case_labels["label_idx"],
+        random_state=cfg.random_seed,
+    )
+
+    val_case_set = set(val_cases)
+    train_case_set = set(train_cases)
+
+    # ---- Build final train/val DataFrames ----
+    # Train: all tiles (aug + non-aug) whose case_id is in train_cases
+    train_df = df[df["case_id"].isin(train_case_set)].reset_index(drop=True)
+
+    # Val: only non-aug tiles for val_cases
+    val_df = df[
+        (~df["is_aug"]) & (df["case_id"].isin(val_case_set))
+    ].reset_index(drop=True)
+
+    # Just for sanity: print how many non-aug go to val (for you to check)
+    n_non_aug_total = len(non_aug)
+    n_non_aug_val = len(val_df)
+    print("---- Split summary (preprocessed, case-wise) ----")
+    print(f"Total non-aug samples: {n_non_aug_total}")
+    print(f"Val non-aug samples:   {n_non_aug_val}")
+    print(f"Target val_size:       {val_size} -> target ~{int(val_size * n_non_aug_total)}")
+    print(f"Train rows (all):      {len(train_df)}")
+    print(f"Val rows (only non-aug): {len(val_df)}")
+    print("--------------------------------------------------")
 
     return train_df, val_df, unique_labels, label_to_idx, idx_to_label
 
 
+# ---------------------------------------------------------------------
+# DATASET & DATALOADER
+# ---------------------------------------------------------------------
+
 class DoctogresDataset(Dataset):
     """Dataset for training/validation.
-    
+
     It can optionally use binary masks to crop the lesion region or
     multiply the image by the mask.
     """
@@ -206,8 +314,12 @@ class DoctogresTestDataset(Dataset):
             img = self.transform(img)
 
         return img, fname
-    
-    
+
+
+# ---------------------------------------------------------------------
+# TRANSFORMS & DATALOADERS
+# ---------------------------------------------------------------------
+
 def get_transforms(cfg: TrainingConfig):
     """Return train and validation transforms.
 
@@ -229,6 +341,7 @@ def get_transforms(cfg: TrainingConfig):
 
     return train_transform, val_transform
 
+
 def create_dataloaders(
     cfg: TrainingConfig,
     train_df: pd.DataFrame,
@@ -238,7 +351,6 @@ def create_dataloaders(
 ):
     """Create train and validation dataloaders."""
     train_img_dir, _, _ = build_paths(cfg)
-
     base_data_dir = _get_data_root(cfg)
 
     # directory per le maschere (comune a train/val)
@@ -247,12 +359,11 @@ def create_dataloaders(
     else:
         mask_dir = os.path.join(base_data_dir, cfg.mask_dir)
 
-    # ---------- directory per il validation ----------
-    # 1) se nel config è impostata val_img_dir, usala
+    # directory per il validation
     if getattr(cfg, "val_img_dir", None) is not None:
         val_img_dir = os.path.join(base_data_dir, cfg.val_img_dir)
     else:
-        # 2) fallback: stessa directory del train (comportamento attuale)
+        # default: stessa cartella del train (pp_train_data)
         val_img_dir = train_img_dir
 
     train_ds = DoctogresDataset(
@@ -266,7 +377,7 @@ def create_dataloaders(
 
     val_ds = DoctogresDataset(
         val_df,
-        img_dir=val_img_dir,      # <<--- QUI ora può essere diverso
+        img_dir=val_img_dir,
         mask_dir=mask_dir,
         transform=val_transform,
         use_masks=cfg.use_masks,
