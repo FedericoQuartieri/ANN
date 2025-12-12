@@ -20,6 +20,7 @@ def create_test_loader(
 ) -> Tuple[DataLoader, List[str]]:
     """Create DataLoader for test images."""
     _, test_img_dir, _ = build_paths(cfg)
+    base_data_dir = cfg.data_dir if os.path.isabs(cfg.data_dir) else os.path.join(cfg.project_root, cfg.data_dir)
 
     # Only take img_*.png, ignore mask_*.png
     test_files = sorted(
@@ -29,10 +30,25 @@ def create_test_loader(
     print("Number of test images:", len(test_files))
     print("First 5 test files:", test_files[:5])
 
+    # Get mask directory
+    if cfg.mask_dir is None:
+        mask_dir = test_img_dir
+    else:
+        mask_dir = os.path.join(base_data_dir, cfg.mask_dir)
+
+    # Get ROI padding
+    roi_padding = getattr(cfg, 'roi_padding', 10)
+    use_masks = getattr(cfg, 'use_masks', False)
+    mask_mode = getattr(cfg, 'mask_mode', 'crop_bbox')
+
     test_ds = DoctogresTestDataset(
         test_files,
         img_dir=test_img_dir,
+        mask_dir=mask_dir,
         transform=val_transform,
+        use_masks=use_masks,
+        mask_mode=mask_mode,
+        roi_padding=roi_padding,
     )
 
     use_pin_memory = torch.cuda.is_available()
