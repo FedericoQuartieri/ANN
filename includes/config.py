@@ -860,7 +860,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
     ## ----------  from now on validation set is not augmented  ----------
 
-
+    # Best val F1: 0.3870366453519207
+    # test F1: 0.2933
     "resnet50_new_preprocessing_new_validation": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -920,6 +921,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
+    # k1 F1: 0.4037
+    # 
     "resnet50_new_preprocessing_new_validation_kfold": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
