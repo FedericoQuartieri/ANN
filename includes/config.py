@@ -48,6 +48,10 @@ class TrainingConfig:
     # ---- ROI PARAMETERS ----
     use_roi_crop: bool = True      # Use ROI crop strategy (recommended)
     roi_padding: int = 10          # Padding in pixels for ROI crop (10-20 recommended)
+    num_workers: int = 0
+    pin_memory: bool = True
+    persistent_workers: bool = False
+    prefetch_factor: int = 2
 
 
 # cv_type: ["holdout", "kfold"]
@@ -723,10 +727,6 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_remove_empty_masks": [True],
         "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
         
-        # ROI Strategy
-        "use_roi_crop": [True],
-        "roi_padding": [10],
-
         "execute" : [True],
         # ===== Hyperparam
         "backbone": ["resnet50"],
@@ -782,10 +782,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
         "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
-        
-        # ROI Strategy
-        "use_roi_crop": [True],
-        "roi_padding": [10],
+    
 
         "execute" : [True],
         # ===== Hyperparam
@@ -848,10 +845,6 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_remove_empty_masks": [False],
         "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
         "pp_smart_discard_threshold": [0.05],
-        
-        # ROI Strategy
-        "use_roi_crop": [True],
-        "roi_padding": [10],
 
         # ===== Esecuzione =====
         "execute": [True],
@@ -945,71 +938,6 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "n_splits": [5],
         "val_size": [0.2],
     },
-
-
-    # k1 F1: 0.4037
-    # 
-    "resnet50_new_preprocessing_new_validation_kfold": {
-        # ===== Dataset (usa output di preprocessing.py)
-        "train_img_dir": ["pp_train_data"],
-        "test_img_dir": ["pp_test_data"],
-        "labels_csv": ["pp_train_labels.csv"],
-        "mask_mode": ["crop_bbox"], # ignored
-        "use_masks": [True], # ignored
-
-
-
-        # ==== PREPROCESSING CONFIG ====
-        "pp_remove_shrek": [True],
-        "pp_fix_stained": [True],
-        "pp_split_doubles": [True],
-        "pp_remove_black_rect": [True],
-        "pp_padding_square": [False],
-        "pp_crop_to_mask": [False],
-
-
-        # == AUGMENTATION ==
-        "pp_augmentation_enabled": [False],
-
-        "pp_crop_padding": [10],
-        "pp_target_size": [384],
-        "pp_strong_rotation_degrees": [15],
-        "pp_strong_zoom_min": [0.8],
-        "pp_strong_zoom_max": [1.0],
-
-        "pp_strong_brightness": [0.2],
-        "pp_strong_contrast": [0.2],
-        "pp_strong_saturation": [0.2],
-        "pp_strong_hue": [0.05],
-        "pp_strong_random_erasing_p": [0.1],
-
-        "pp_smart_discard_threshold": [0.02],
-        "pp_split_into_tiles": [True],
-        "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
-        
-        # ROI Strategy
-        "use_roi_crop": [True],
-        "roi_padding": [10],
-
-        "execute" : [True],
-        # ===== Hyperparam
-        "backbone": ["resnet50"],
-        "img_size": [384],
-        "batch_size": [16],
-        "num_workers": [4],
-        "lr": [1e-4],
-        "weight_decay": [1e-4],
-        "epochs": [50],
-        "use_scheduler": [True],
-        "use_amp": [True],
-
-        # ===== Validation
-        "cv_type": ["kfold"],
-        "n_splits": [4],
-        "val_size": [0.2],
-    },
-
 
 
 
@@ -1204,7 +1132,77 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "cv_type": ["holdout"],
         "n_splits": [5],
         "val_size": [0.2],
-    }
+    },
+
+
+
+    "resnet50_new_preprocessing_new_validation_kfold": {
+        # ===== Dataset (usa output di preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        "mask_mode": ["crop_bbox"], # ignored
+        "use_masks": [True], # ignored
+
+
+
+        # ==== PREPROCESSING CONFIG ====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+
+
+        # == AUGMENTATION ==
+        "pp_augmentation_enabled": [False],
+
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.8],
+        "pp_strong_zoom_max": [1.0],
+
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
+
+        # workers
+        "num_workers": [2],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+        "execute" : [True],
+        # ===== Hyperparam
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        # ===== Validation
+        "cv_type": ["kfold"],
+        "n_splits": [4],
+        "val_size": [0.2],
+    },
+
 
 }
 
