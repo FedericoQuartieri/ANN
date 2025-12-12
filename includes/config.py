@@ -162,6 +162,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     # ----------------------------------------------------------------------
     
     # 0.1865
+    #not ROI updated
     "resnet50_img384": {
         # ===== Dataset (raw)
         "train_img_dir": ["train_data"],
@@ -196,6 +197,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     # ----------------------------------------------------------------------
 
     # test: 0.0246
+    #not ROI updated
     "resnet50_img384_preprocessing": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -250,6 +252,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
     #f1=0.1837
+    #not ROI updated
     "resnet50_img384_preprocessing_augementation_test": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -317,6 +320,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
     #f1=0.1837
+    #not ROI updated
     "resnet50_img384_preprocessing_augementation_10_copies": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -384,6 +388,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
     #f1 = 0.1167
+    #not ROI updated
     "resnet50_kfold_sweep": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -445,6 +450,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
     #f1 = 0.2578
+    #not ROI updated
     "resnet50_kfold_cropbbox_30ep": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -565,6 +571,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
     # 0.2603
+    #not ROI updated
     "resnet50_img384_pp_crop_bbox_offaug4_strong": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -622,6 +629,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
     #0.2690
+    #not ROI updated
     "resnet50_img384_pp_crop_bbox_offaug2_soft": {
         # ===== Dataset (preprocessing output) =====
         "train_img_dir": ["pp_train_data"],
@@ -693,7 +701,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     #       - pp_darken_outside_mask
 
 
-    # 0.2825
+    # f1 = 0.3200
+    #best val f1 = 0.41044344990450576
     "resnet50_new_preprocessing": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -750,6 +759,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
     # Best val F1: 0.43062791493768726
     # test F1: 0.2642
+    #not ROI updated
     "resnet50_new_preprocessing_noamp": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -807,6 +817,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
     # Grid search per ottimizzare lr e weight_decay
     # Best config da provare dopo sweep: lr=1e-4, wd=1e-3 o 5e-3
+    #not ROI updated
     "resnet50_kfold_50ep_gridsearch": {
         # ===== Dataset (preprocessing già fatto, NO augmentation offline)
         "train_img_dir": ["pp_train_data"],
@@ -878,6 +889,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
     # Best val F1: 0.3870366453519207
     # test F1: 0.2933
+    #not ROI updated
     "resnet50_new_preprocessing_new_validation": {
         # ===== Dataset (usa output di preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -1416,6 +1428,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "weight_decay": [1e-4],
         "epochs": [50],
         "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
         "use_amp": [True],
 
         # ===== Validation
@@ -1424,6 +1438,58 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "val_size": [0.2],
     },
 
+    "resnet20_new_preprocessing_with_aug": {
+        # ===== Dataset (usa output di preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # ==== PREPROCESSING CONFIG (solo UNO per chiave) ====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+
+        "pp_augmentation_enabled": [True],
+
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.8],
+        "pp_strong_zoom_max": [1.0],
+
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        "execute" : [True],
+        # ===== Hyperparam
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [20],
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+        "use_amp": [True],
+
+        # ===== Validation
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "val_size": [0.2],
+    }
 
 
     "resnet50_strongaug_424_wd_grid": {
