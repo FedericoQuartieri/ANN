@@ -23,7 +23,9 @@ PREPROCESSING_KEYS: List[str] = [
         "pp_strong_contrast",
         "pp_strong_saturation",
         "pp_strong_hue",
-        "pp_strong_random_erasing_p"
+        "pp_strong_random_erasing_p",
+        "use_roi_crop",
+        "roi_padding"
 ]
 
 @dataclass
@@ -42,6 +44,10 @@ class TrainingConfig:
 
     # ---- DATA SPLIT ----
     random_seed: int = 42
+    
+    # ---- ROI PARAMETERS ----
+    use_roi_crop: bool = True      # Use ROI crop strategy (recommended)
+    roi_padding: int = 10          # Padding in pixels for ROI crop (10-20 recommended)
 
 
 # cv_type: ["holdout", "kfold"]
@@ -63,8 +69,12 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_crop_to_mask": [True],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [True],
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
         "pp_augmentation_enabled": [True],
+        
+        # ROI Strategy (nuova implementazione)
+        "use_roi_crop": [True],   # Usa ROI crop quadrato con padding
+        "roi_padding": [10],       # Padding in pixels per ROI (10-20 consigliato)
 
         "pp_target_size": [256],
         "pp_crop_padding": [10],
@@ -113,10 +123,13 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_strong_random_erasing_p": [0.1],
 
         "pp_smart_discard_threshold": [0.02],
-        "pp_split_into_tiles": [True],
-        "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [True],
-
+        "pp_split_into_tiles": [False],
+        "pp_remove_empty_masks": [False],
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
 
         "execute" : [True],
         # ===== Hyperparam
@@ -708,8 +721,11 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [True],
-
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
 
         "execute" : [True],
         # ===== Hyperparam
@@ -765,8 +781,11 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [True],
-
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
 
         "execute" : [True],
         # ===== Hyperparam
@@ -827,8 +846,12 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         # NO splitting in tiles (mantieni immagini intere)
         "pp_split_into_tiles": [False],
         "pp_remove_empty_masks": [False],
-        "pp_darken_outside_mask": [False],
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
         "pp_smart_discard_threshold": [0.05],
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
 
         # ===== Esecuzione =====
         "execute": [True],
@@ -899,8 +922,11 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [True],
-
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
 
         "execute" : [True],
         # ===== Hyperparam
@@ -960,8 +986,11 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [True],
-
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
 
         "execute" : [True],
         # ===== Hyperparam
@@ -1021,8 +1050,11 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [True],
-
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
 
         "execute" : [True],
         # ===== Hyperparam
@@ -1086,7 +1118,11 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_smart_discard_threshold": [0.0],  # 0 => non scarta nulla
         "pp_split_into_tiles": [False],
         "pp_remove_empty_masks": [False],
-        "pp_darken_outside_mask": [False],
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy (disabilitato per preprocessing light)
+        "use_roi_crop": [False],
+        "roi_padding": [10],
 
         "execute": [True],
 
@@ -1107,6 +1143,68 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "val_size": [0.2],
     },
 
+
+    # Configurazione ottimizzata basata su resnet50_new_preprocessing (F1=0.2825)
+    # Differenze: ridotto a 40 epochs per training più veloce
+    "resnet50_optimized_40ep": {
+        # ===== Dataset (preprocessing output)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+
+        # ==== PREPROCESSING CONFIG (da migliore config) ====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+
+        # NO augmentation offline (migliore approccio per evitare overfitting)
+        "pp_augmentation_enabled": [False],
+
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.8],
+        "pp_strong_zoom_max": [1.0],
+
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        # Tile splitting + mask cleaning (da best config con F1=0.2825)
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],       # True per generare molte più tiles da ogni immagine
+        "pp_remove_empty_masks": [True],     # Rimuove tiles senza tessuto
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
+
+        "execute": [True],
+
+        # ===== Hyperparameters (ottimizzati da best config) =====
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],              # Best performing lr
+        "weight_decay": [5e-4],    # Leggermente più regolarizzazione (da offaug2_soft)
+        "epochs": [40],            # Ridotto da 50 per velocità
+        "use_scheduler": [True],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],  # Best performing mask mode
+        "use_amp": [True],           # Mixed precision per velocità
+
+        # ===== Validation: holdout veloce =====
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "val_size": [0.2],
+    }
 
 }
 

@@ -197,6 +197,7 @@ class DoctogresDataset(Dataset):
         transform=None,
         use_masks: bool = False,
         mask_mode: str = "crop_bbox",   # "crop_bbox" or "multiply"
+        roi_padding: int = 10,           # Padding for ROI crop (in pixels)
     ):
         self.df = df.reset_index(drop=True)
         self.img_dir = img_dir
@@ -204,14 +205,23 @@ class DoctogresDataset(Dataset):
         self.transform = transform
         self.use_masks = use_masks
         self.mask_mode = mask_mode
+        self.roi_padding = roi_padding
 
     def __len__(self) -> int:
         return len(self.df)
 
     @staticmethod
-    def _get_mask_bbox(mask_img: Image.Image) -> Optional[tuple]:
-        """Return bounding box (left, top, right, bottom) from a binary mask.
+    def _get_mask_bbox_square(mask_img: Image.Image, padding: int = 10) -> Optional[tuple]:
+        """Return SQUARE bounding box (left, top, right, bottom) from a binary mask.
+        The bbox is centered on the mask region and made square.
         If mask is empty, return None.
+        
+        Args:
+            mask_img: Binary mask image (PIL Image)
+            padding: Padding in pixels around the bbox (default: 10)
+        
+        Returns:
+            Square bbox tuple (left, top, right, bottom) for PIL crop, or None
         """
         mask_np = np.array(mask_img)  # expected 0/255
         ys, xs = np.where(mask_np > 0)
@@ -219,18 +229,43 @@ class DoctogresDataset(Dataset):
         if xs.size == 0 or ys.size == 0:
             return None
 
+        # Get mask bounding box
         x_min, x_max = xs.min(), xs.max()
         y_min, y_max = ys.min(), ys.max()
 
-        margin = 5
+        # Add padding
         h, w = mask_np.shape
-        x_min = max(x_min - margin, 0)
-        y_min = max(y_min - margin, 0)
-        x_max = min(x_max + margin, w - 1)
-        y_max = min(y_max + margin, h - 1)
+        x_min = max(x_min - padding, 0)
+        y_min = max(y_min - padding, 0)
+        x_max = min(x_max + padding, w - 1)
+        y_max = min(y_max + padding, h - 1)
+
+        # Calculate width and height
+        bbox_w = x_max - x_min + 1
+        bbox_h = y_max - y_min + 1
+        
+        # Make it square by using the larger dimension
+        size = max(bbox_w, bbox_h)
+        
+        # Center the square on the bbox
+        center_x = (x_min + x_max) // 2
+        center_y = (y_min + y_max) // 2
+        
+        # Calculate square bounds
+        half_size = size // 2
+        x1 = max(0, center_x - half_size)
+        y1 = max(0, center_y - half_size)
+        x2 = min(w, x1 + size)
+        y2 = min(h, y1 + size)
+        
+        # Adjust if we hit image edge
+        if x2 - x1 < size:
+            x1 = max(0, x2 - size)
+        if y2 - y1 < size:
+            y1 = max(0, y2 - size)
 
         # PIL bbox: (left, upper, right, lower) with right/lower exclusive
-        return (x_min, y_min, x_max + 1, y_max + 1)
+        return (x1, y1, x2, y2)
 
     def _apply_mask(
         self,
@@ -247,7 +282,9 @@ class DoctogresDataset(Dataset):
         mask_img = Image.open(mask_path).convert("L")
 
         if self.mask_mode == "crop_bbox":
-            bbox = self._get_mask_bbox(mask_img)
+            # Use square ROI with padding
+            roi_padding = getattr(self, 'roi_padding', 10)
+            bbox = self._get_mask_bbox_square(mask_img, padding=roi_padding)
             if bbox is not None:
                 img = img.crop(bbox)
             return img
@@ -297,18 +334,92 @@ class DoctogresDataset(Dataset):
 class DoctogresTestDataset(Dataset):
     """Dataset for test images (no labels)."""
 
-    def __init__(self, file_list: List[str], img_dir: str, transform=None):
+    def __init__(
+        self, 
+        file_list: List[str], 
+        img_dir: str, 
+        mask_dir: Optional[str] = None,
+        transform=None,
+        use_masks: bool = False,
+        mask_mode: str = "crop_bbox",
+        roi_padding: int = 10,
+    ):
         self.file_list = file_list
         self.img_dir = img_dir
+        self.mask_dir = mask_dir if mask_dir is not None else img_dir
         self.transform = transform
+        self.use_masks = use_masks
+        self.mask_mode = mask_mode
+        self.roi_padding = roi_padding
 
     def __len__(self) -> int:
         return len(self.file_list)
+
+    @staticmethod
+    def _get_mask_bbox_square(mask_img: Image.Image, padding: int = 10) -> Optional[tuple]:
+        """Return SQUARE bounding box (left, top, right, bottom) from a binary mask.
+        Same implementation as DoctogresDataset.
+        """
+        mask_np = np.array(mask_img)
+        ys, xs = np.where(mask_np > 0)
+
+        if xs.size == 0 or ys.size == 0:
+            return None
+
+        x_min, x_max = xs.min(), xs.max()
+        y_min, y_max = ys.min(), ys.max()
+
+        h, w = mask_np.shape
+        x_min = max(x_min - padding, 0)
+        y_min = max(y_min - padding, 0)
+        x_max = min(x_max + padding, w - 1)
+        y_max = min(y_max + padding, h - 1)
+
+        bbox_w = x_max - x_min + 1
+        bbox_h = y_max - y_min + 1
+        size = max(bbox_w, bbox_h)
+        
+        center_x = (x_min + x_max) // 2
+        center_y = (y_min + y_max) // 2
+        half_size = size // 2
+        
+        x1 = max(0, center_x - half_size)
+        y1 = max(0, center_y - half_size)
+        x2 = min(w, x1 + size)
+        y2 = min(h, y1 + size)
+        
+        if x2 - x1 < size:
+            x1 = max(0, x2 - size)
+        if y2 - y1 < size:
+            y1 = max(0, y2 - size)
+
+        return (x1, y1, x2, y2)
+
+    def _apply_mask(self, img: Image.Image, img_name: str) -> Image.Image:
+        """Apply ROI crop to test image if mask exists."""
+        mask_name = img_name.replace("img_", "mask_")
+        mask_path = os.path.join(self.mask_dir, mask_name)
+
+        if not os.path.exists(mask_path):
+            return img
+
+        mask_img = Image.open(mask_path).convert("L")
+
+        if self.mask_mode == "crop_bbox":
+            bbox = self._get_mask_bbox_square(mask_img, padding=self.roi_padding)
+            if bbox is not None:
+                img = img.crop(bbox)
+        
+        return img
 
     def __getitem__(self, idx: int):
         fname = self.file_list[idx]
         img_path = os.path.join(self.img_dir, fname)
         img = Image.open(img_path).convert("RGB")
+
+        # Apply mask/ROI if enabled
+        if self.use_masks:
+            img = self._apply_mask(img, fname)
 
         if self.transform is not None:
             img = self.transform(img)
@@ -366,6 +477,8 @@ def create_dataloaders(
         # default: stessa cartella del train (pp_train_data)
         val_img_dir = train_img_dir
 
+    roi_padding = getattr(cfg, 'roi_padding', 10)
+    
     train_ds = DoctogresDataset(
         train_df,
         img_dir=train_img_dir,
@@ -373,6 +486,7 @@ def create_dataloaders(
         transform=train_transform,
         use_masks=cfg.use_masks,
         mask_mode=cfg.mask_mode,
+        roi_padding=roi_padding,
     )
 
     val_ds = DoctogresDataset(
@@ -382,6 +496,7 @@ def create_dataloaders(
         transform=val_transform,
         use_masks=cfg.use_masks,
         mask_mode=cfg.mask_mode,
+        roi_padding=roi_padding,
     )
 
     use_pin_memory = torch.cuda.is_available()
