@@ -25,7 +25,7 @@ PREPROCESSING_KEYS: List[str] = [
         "pp_strong_hue",
         "pp_strong_random_erasing_p",
         "use_roi_crop",
-        "roi_padding"
+        "roi_padding",
 ]
 
 @dataclass
@@ -940,6 +940,126 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
+    # test F1: 0.3686
+    "best" :  {
+        'train_img_dir': ['pp_train_data'],
+        'test_img_dir': ['pp_test_data'],
+        'labels_csv': ['pp_train_labels.csv'],
+        'mask_mode': ['crop_bbox'],
+        'use_masks': [True],
+        'pp_remove_shrek': [True],
+        'pp_fix_stained': [True],
+        'pp_split_doubles': [True],
+        'pp_remove_black_rect': [True],
+        'pp_padding_square': [False],
+        'pp_crop_to_mask': [False],
+        'pp_augmentation_enabled': [True],
+        'pp_crop_padding': [10],
+        'pp_target_size': [384],
+        'pp_strong_rotation_degrees': [15],
+        'pp_strong_zoom_min': [0.8],
+        'pp_strong_zoom_max': [1.0],
+        'pp_strong_brightness': [0.2],
+        'pp_strong_contrast': [0.2],
+        'pp_strong_saturation': [0.2],
+        'pp_strong_hue': [0.05],
+        'pp_strong_random_erasing_p': [0.1],
+        'pp_smart_discard_threshold': [0.02],
+        'pp_split_into_tiles': [True],
+        'pp_remove_empty_masks': [True],
+        'pp_darken_outside_mask': [False],
+        'use_roi_crop': [True],
+        'roi_padding': [10],
+        'execute': [True],
+        'backbone': ['resnet50'],
+        'img_size': [384],
+        'batch_size': [16],
+        'num_workers': [4],
+        'lr': [0.0001],
+        'weight_decay': [0.0001],
+        'epochs': [20],
+        'use_scheduler': [True],
+        'use_amp': [True],
+        'cv_type': ['holdout'],
+        'n_splits': [5],
+        'val_size': [0.2]
+    },
+
+    # --------- ADDED NUMWORKERS------------
+
+    #k1 Fold best F1: 0.4638
+    #k2 Fold best F1: 0.5244
+    #k3 Fold best F1: 0.4617
+    #k4 Fold best F1: 0.4179
+    # Mean F1 over 4 folds: 0.4669
+    # test F1: 0.3303
+    "resnet50_new_preprocessing_new_validation_kfold": {
+        # ===== Dataset (usa output di preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        "mask_mode": ["crop_bbox"], # ignored
+        "use_masks": [True], # ignored
+
+
+
+        # ==== PREPROCESSING CONFIG ====
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+
+
+        # == AUGMENTATION ==
+        "pp_augmentation_enabled": [False],
+
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.8],
+        "pp_strong_zoom_max": [1.0],
+
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+        # ROI Strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
+
+        # workers
+        "num_workers": [2],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+        "execute" : [True],
+        # ===== Hyperparam
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "num_workers": [4],
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        # ===== Validation
+        "cv_type": ["kfold"],
+        "n_splits": [4],
+        "val_size": [0.2],
+    },
+
 
     "resnet50_424_augmentation_weight-epoch-grid": {
         # ===== Dataset (usa output di preprocessing.py)
@@ -1001,6 +1121,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "n_splits": [5],
         "val_size": [0.2],
     },
+
 
 
     "resnet50_424_lightpreproc_nooffaug_weight-epoch-grid": {
@@ -1072,63 +1193,78 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
-    # Configurazione ottimizzata basata su resnet50_new_preprocessing (F1=0.2825)
-    # Differenze: ridotto a 40 epochs per training più veloce
-    "resnet50_optimized_40ep": {
-        # ===== Dataset (preprocessing output)
+
+
+    "testing_without_persistent": {
+        # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
 
-        # ==== PREPROCESSING CONFIG (da migliore config) ====
+
+
+        # ===== Preprocessing config (one value per key)
         "pp_remove_shrek": [True],
         "pp_fix_stained": [True],
         "pp_split_doubles": [True],
         "pp_remove_black_rect": [True],
         "pp_padding_square": [False],
         "pp_crop_to_mask": [False],
-
-        # NO augmentation offline (migliore approccio per evitare overfitting)
-        "pp_augmentation_enabled": [False],
-
         "pp_crop_padding": [10],
         "pp_target_size": [384],
+
+
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
         "pp_strong_rotation_degrees": [15],
         "pp_strong_zoom_min": [0.8],
         "pp_strong_zoom_max": [1.0],
-
         "pp_strong_brightness": [0.2],
         "pp_strong_contrast": [0.2],
         "pp_strong_saturation": [0.2],
         "pp_strong_hue": [0.05],
         "pp_strong_random_erasing_p": [0.1],
 
-        # Tile splitting + mask cleaning (da best config con F1=0.2825)
+        # Smart discard / masks
         "pp_smart_discard_threshold": [0.02],
-        "pp_split_into_tiles": [True],       # True per generare molte più tiles da ogni immagine
-        "pp_remove_empty_masks": [True],     # Rimuove tiles senza tessuto
-        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
-        
-        # ROI Strategy
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
+
+        # =======================
+
+        # ROI strategy
         "use_roi_crop": [True],
         "roi_padding": [10],
 
+
+        # Workers config
+        "num_workers": [4],          # come prima (se prima avevi warning, quasi sicuramente >0)
+        "pin_memory": [True],        # replica torch.cuda.is_available(): su CPU resta False, su GPU True
+        "persistent_workers": [False],  # COME PRIMA: disattivato
+        "prefetch_factor": [2],      # default di PyTorch -> come se non lo avessi mai specificato
+
+
+
+        # Execute preprocessing
         "execute": [True],
 
-        # ===== Hyperparameters (ottimizzati da best config) =====
+        # ===== Model / training hyperparams
         "backbone": ["resnet50"],
         "img_size": [384],
         "batch_size": [16],
-        "num_workers": [4],
-        "lr": [1e-4],              # Best performing lr
-        "weight_decay": [5e-4],    # Leggermente più regolarizzazione (da offaug2_soft)
-        "epochs": [40],            # Ridotto da 50 per velocità
+        "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [20],
         "use_scheduler": [True],
-        "use_masks": [True],
-        "mask_mode": ["crop_bbox"],  # Best performing mask mode
-        "use_amp": [True],           # Mixed precision per velocità
+        "use_amp": [True],
 
-        # ===== Validation: holdout veloce =====
+        # ===== Validation
         "cv_type": ["holdout"],
         "n_splits": [5],
         "val_size": [0.2],
@@ -1136,62 +1272,147 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
 
 
-    "resnet50_new_preprocessing_new_validation_kfold": {
-        # ===== Dataset (usa output di preprocessing.py)
+    "testing_with_persistent": {
+        # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
-        "mask_mode": ["crop_bbox"], # ignored
-        "use_masks": [True], # ignored
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
 
 
 
-        # ==== PREPROCESSING CONFIG ====
+        # ===== Preprocessing config (one value per key)
         "pp_remove_shrek": [True],
         "pp_fix_stained": [True],
         "pp_split_doubles": [True],
         "pp_remove_black_rect": [True],
         "pp_padding_square": [False],
         "pp_crop_to_mask": [False],
-
-
-        # == AUGMENTATION ==
-        "pp_augmentation_enabled": [False],
-
         "pp_crop_padding": [10],
         "pp_target_size": [384],
+
+
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
         "pp_strong_rotation_degrees": [15],
         "pp_strong_zoom_min": [0.8],
         "pp_strong_zoom_max": [1.0],
-
         "pp_strong_brightness": [0.2],
         "pp_strong_contrast": [0.2],
         "pp_strong_saturation": [0.2],
         "pp_strong_hue": [0.05],
         "pp_strong_random_erasing_p": [0.1],
 
+        # Smart discard / masks
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
-        
-        # ROI Strategy
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
+
+        # =======================
+
+        # ROI strategy
         "use_roi_crop": [True],
         "roi_padding": [10],
 
-        # workers
+
+        # Workers config
         "num_workers": [2],
         "persistent_workers": [True],
         "pin_memory": [True],
         "prefetch_factor": [2],
 
-        "execute" : [True],
-        # ===== Hyperparam
+
+        # Execute preprocessing
+        "execute": [True],
+
+        # ===== Model / training hyperparams
         "backbone": ["resnet50"],
         "img_size": [384],
         "batch_size": [16],
-        "num_workers": [4],
         "lr": [1e-4],
+        "weight_decay": [1e-4],
+        "epochs": [20],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        # ===== Validation
+        "cv_type": ["holdout"],
+        "n_splits": [5],
+        "val_size": [0.2],
+    },
+
+
+
+
+    "resnet50_strongaug_424_batch_grid": {
+        # ===== Dataset (uses output of preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
+
+
+
+        # ===== Preprocessing config (one value per key)
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_crop_padding": [10],
+        "pp_target_size": [424],
+
+
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
+        "pp_num_aug_copies": [4],
+        "pp_strong_rotation_degrees": [45],
+        "pp_strong_zoom_min": [1.0],
+        "pp_strong_zoom_max": [1.5],
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        # Smart discard / masks
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
+
+        # =======================
+
+        # ROI strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
+
+
+        # Workers config
+        "num_workers": [2],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+
+        # Execute preprocessing
+        "execute": [True],
+
+        # ===== Model / training hyperparams
+        "backbone": ["resnet50"],
+        "img_size": [424],
+        "batch_size": [16, 8],
+        "lr": [1e-4, 3e-4],
         "weight_decay": [1e-4],
         "epochs": [50],
         "use_scheduler": [True],
@@ -1199,15 +1420,252 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
         # ===== Validation
         "cv_type": ["kfold"],
-        "n_splits": [4],
+        "n_splits": [5],
         "val_size": [0.2],
     },
+
+
+
+    "resnet50_strongaug_424_wd_grid": {
+        # ===== Dataset (uses output of preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
+
+
+
+        # ===== Preprocessing config (one value per key)
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_crop_padding": [10],
+        "pp_target_size": [424],
+
+
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
+        "pp_num_aug_copies": [4],
+        "pp_strong_rotation_degrees": [45],
+        "pp_strong_zoom_min": [1.0],
+        "pp_strong_zoom_max": [1.5],
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        # Smart discard / masks
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
+
+        # =======================
+
+        # ROI strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
+
+
+        # Workers config
+        "num_workers": [2],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+
+        # Execute preprocessing
+        "execute": [True],
+
+        # ===== Model / training hyperparams
+        "backbone": ["resnet50"],
+        "img_size": [424],
+        "batch_size": [16],
+        "lr": [1e-4, 3e-4],
+        "weight_decay": [1e-3, 5e-3],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        # ===== Validation
+        "cv_type": ["kfold"],
+        "n_splits": [5],
+        "val_size": [0.2],
+    },
+
+
+
+
+
+    "resnet50_oldaug_3copies_424_wd_grid": {
+        # ===== Dataset (uses output of preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
+
+
+
+        # ===== Preprocessing config (one value per key)
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_crop_padding": [10],
+        "pp_target_size": [424],
+
+
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
+        "pp_num_aug_copies": [3],
+        "pp_strong_rotation_degrees": [15],
+        "pp_strong_zoom_min": [0.8],
+        "pp_strong_zoom_max": [1.0],
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        # Smart discard / masks
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
+
+        # Smart discard / masks
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
+
+        # =======================
+
+        # ROI strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
+
+
+        # Workers config
+        "num_workers": [2],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+
+        # Execute preprocessing
+        "execute": [True],
+
+        # ===== Model / training hyperparams
+        "backbone": ["resnet50"],
+        "img_size": [424],
+        "batch_size": [16],
+        "lr": [1e-4, 3e-4],
+        "weight_decay": [1e-3, 5e-3],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        # ===== Validation
+        "cv_type": ["kfold"],
+        "n_splits": [5],
+        "val_size": [0.2],
+    },
+
+
+
 
 
 }
 
 
-
-        
-
 ## AGGIUNGERE DROPOUT ?????
+
+
+
+
+
+
+
+
+# BOH
+
+
+
+    # # Configurazione ottimizzata basata su resnet50_new_preprocessing (F1=0.2825)
+    # # Differenze: ridotto a 40 epochs per training più veloce
+    # "resnet50_optimized_40ep": {
+    #     # ===== Dataset (preprocessing output)
+    #     "train_img_dir": ["pp_train_data"],
+    #     "test_img_dir": ["pp_test_data"],
+    #     "labels_csv": ["pp_train_labels.csv"],
+
+    #     # ==== PREPROCESSING CONFIG (da migliore config) ====
+    #     "pp_remove_shrek": [True],
+    #     "pp_fix_stained": [True],
+    #     "pp_split_doubles": [True],
+    #     "pp_remove_black_rect": [True],
+    #     "pp_padding_square": [False],
+    #     "pp_crop_to_mask": [False],
+
+    #     # NO augmentation offline (migliore approccio per evitare overfitting)
+    #     "pp_augmentation_enabled": [False],
+
+    #     "pp_crop_padding": [10],
+    #     "pp_target_size": [384],
+    #     "pp_strong_rotation_degrees": [15],
+    #     "pp_strong_zoom_min": [0.8],
+    #     "pp_strong_zoom_max": [1.0],
+
+    #     "pp_strong_brightness": [0.2],
+    #     "pp_strong_contrast": [0.2],
+    #     "pp_strong_saturation": [0.2],
+    #     "pp_strong_hue": [0.05],
+    #     "pp_strong_random_erasing_p": [0.1],
+
+    #     # Tile splitting + mask cleaning (da best config con F1=0.2825)
+    #     "pp_smart_discard_threshold": [0.02],
+    #     "pp_split_into_tiles": [True],       # True per generare molte più tiles da ogni immagine
+    #     "pp_remove_empty_masks": [True],     # Rimuove tiles senza tessuto
+    #     "pp_darken_outside_mask": [False], # lasciare False se use_roi_crop = True
+        
+    #     # ROI Strategy
+    #     "use_roi_crop": [True],
+    #     "roi_padding": [10],
+
+    #     "execute": [True],
+
+    #     # ===== Hyperparameters (ottimizzati da best config) =====
+    #     "backbone": ["resnet50"],
+    #     "img_size": [384],
+    #     "batch_size": [16],
+    #     "num_workers": [4],
+    #     "lr": [1e-4],              # Best performing lr
+    #     "weight_decay": [5e-4],    # Leggermente più regolarizzazione (da offaug2_soft)
+    #     "epochs": [40],            # Ridotto da 50 per velocità
+    #     "use_scheduler": [True],
+    #     "use_masks": [True],
+    #     "mask_mode": ["crop_bbox"],  # Best performing mask mode
+    #     "use_amp": [True],           # Mixed precision per velocità
+
+    #     # ===== Validation: holdout veloce =====
+    #     "cv_type": ["holdout"],
+    #     "n_splits": [5],
+    #     "val_size": [0.2],
+    # },
+
+    
