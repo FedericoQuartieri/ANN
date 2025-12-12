@@ -499,22 +499,21 @@ def create_dataloaders(
         roi_padding=roi_padding,
     )
 
-    use_pin_memory = torch.cuda.is_available()
+    use_pin_memory = cfg.pin_memory and torch.cuda.is_available()
 
-    train_loader = DataLoader(
-        train_ds,
+    use_persistent = bool(cfg.persistent_workers) and int(cfg.num_workers) > 0
+
+    dl_kwargs = dict(
         batch_size=cfg.batch_size,
-        shuffle=True,
-        num_workers=cfg.num_workers,
+        num_workers=int(cfg.num_workers),
         pin_memory=use_pin_memory,
+        persistent_workers=use_persistent,
     )
 
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=cfg.batch_size,
-        shuffle=False,
-        num_workers=cfg.num_workers,
-        pin_memory=use_pin_memory,
-    )
+    if int(cfg.num_workers) > 0:
+        dl_kwargs["prefetch_factor"] = int(cfg.prefetch_factor)
+
+    train_loader = DataLoader(train_ds, shuffle=True, **dl_kwargs)
+    val_loader   = DataLoader(val_ds, shuffle=False, **dl_kwargs)
 
     return train_loader, val_loader

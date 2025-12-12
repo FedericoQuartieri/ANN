@@ -51,15 +51,22 @@ def create_test_loader(
         roi_padding=roi_padding,
     )
 
-    use_pin_memory = torch.cuda.is_available()
+    use_pin_memory = cfg.pin_memory and torch.cuda.is_available()
+    use_persistent = bool(cfg.persistent_workers) and int(cfg.num_workers) > 0
 
-    test_loader = DataLoader(
-        test_ds,
+    dl_kwargs = dict(
         batch_size=cfg.batch_size,
         shuffle=False,
-        num_workers=cfg.num_workers,
+        num_workers=int(cfg.num_workers),
         pin_memory=use_pin_memory,
+        persistent_workers=use_persistent,
     )
+
+    if int(cfg.num_workers) > 0:
+        dl_kwargs["prefetch_factor"] = int(cfg.prefetch_factor)
+
+    test_loader = DataLoader(test_ds, **dl_kwargs)
+
 
     return test_loader, test_files
 
