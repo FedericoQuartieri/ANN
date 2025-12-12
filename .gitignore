@@ -11,3 +11,4 @@ local_lib/
 configs/
 old_models/
 Colab_augmentation_and_image_retrival.ipynb
+*pth
