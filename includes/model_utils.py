@@ -33,7 +33,37 @@ def build_model(cfg: TrainingConfig, num_classes: int, device: torch.device) -> 
         )
         # classifier is usually: Dropout -> Linear
         in_features = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(in_features, num_classes)
+        dropout_rate = getattr(cfg, 'dropout_rate', 0.0)
+        model.classifier = nn.Sequential(
+            nn.Dropout(p=dropout_rate, inplace=True),
+            nn.Linear(in_features, num_classes)
+        )
+
+    elif backbone == "efficientnet_b3":
+        # EfficientNet-B3 from torchvision (better for 384x384 images)
+        model = models.efficientnet_b3(
+            weights=models.EfficientNet_B3_Weights.IMAGENET1K_V1
+        )
+        # classifier is usually: Dropout -> Linear
+        in_features = model.classifier[1].in_features
+        dropout_rate = getattr(cfg, 'dropout_rate', 0.0)
+        model.classifier = nn.Sequential(
+            nn.Dropout(p=dropout_rate, inplace=True),
+            nn.Linear(in_features, num_classes)
+        )
+
+    elif backbone == "convnext_tiny":
+        # ConvNeXt-Tiny from torchvision (modern CNN, good accuracy/speed tradeoff)
+        model = models.convnext_tiny(
+            weights=models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1
+        )
+        # classifier is: LayerNorm -> Flatten -> Linear
+        in_features = model.classifier[2].in_features
+        dropout_rate = getattr(cfg, 'dropout_rate', 0.0)
+        model.classifier[2] = nn.Sequential(
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(in_features, num_classes)
+        )
 
     else:
         raise ValueError(f"Unknown backbone: {cfg.backbone}")
@@ -58,7 +88,12 @@ def create_criterion_optimizer_scheduler(
         class_weights, dtype=torch.float32, device=device
     )
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+    # Label smoothing for better generalization (0.0 = disabled)
+    label_smoothing = getattr(cfg, 'label_smoothing', 0.0)
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights_tensor,
+        label_smoothing=label_smoothing
+    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -125,7 +160,13 @@ def train_one_epoch(
 
     n_batches = len(loader)
 
-    for batch_idx, (images, labels) in enumerate(iterator, start=1):
+    for batch_idx, batch in enumerate(iterator, start=1):
+        # Support both (img, label) and (img, label, case_id) formats
+        if len(batch) == 3:
+            images, labels, _ = batch  # Ignore case_id during training
+        else:
+            images, labels = batch
+        
         images = images.to(device)
         labels = labels.to(device)
 
@@ -203,8 +244,13 @@ def evaluate(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
+    aggregate_by_image: bool = True,
 ):
     """Evaluate model on a loader, returning metrics and predictions.
+    
+    If aggregate_by_image=True, tiles are aggregated by original image
+    (using mean softmax probabilities) before computing F1. This makes
+    validation metrics comparable to test metrics.
 
     Ritorna:
         epoch_loss, epoch_f1_macro, y_true, y_pred
@@ -215,25 +261,64 @@ def evaluate(
 
     all_labels = []
     all_preds = []
+    all_probs = []  # For image-level aggregation
+    all_case_ids = []  # Original image IDs
 
     with torch.no_grad():
-        for images, labels in loader:
+        for batch in loader:
+            # Support both (img, label) and (img, label, case_id) formats
+            if len(batch) == 3:
+                images, labels, case_ids = batch
+            else:
+                images, labels = batch
+                case_ids = [f"sample_{i}" for i in range(len(labels))]  # Fallback
+            
             images = images.to(device)
             labels = labels.to(device)
 
             outputs = model(images)
             loss = criterion(outputs, labels)
+            probs = torch.softmax(outputs, dim=1)
             _, preds = torch.max(outputs, dim=1)
 
             running_loss += loss.item() * images.size(0)
             running_total += labels.size(0)
 
-            all_labels.append(labels.cpu().numpy())
-            all_preds.append(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy().tolist())
+            all_preds.extend(preds.cpu().numpy().tolist())
+            all_probs.extend(probs.cpu().numpy().tolist())
+            all_case_ids.extend(case_ids)
 
     epoch_loss = running_loss / running_total
-    y_true = np.concatenate(all_labels)
-    y_pred = np.concatenate(all_preds)
+    
+    if aggregate_by_image and len(set(all_case_ids)) < len(all_case_ids):
+        # There are multiple tiles per image -> aggregate
+        # Group by case_id
+        from collections import defaultdict
+        grouped_probs = defaultdict(list)
+        grouped_labels = {}
+        
+        for case_id, prob, label in zip(all_case_ids, all_probs, all_labels):
+            grouped_probs[case_id].append(prob)
+            grouped_labels[case_id] = label  # All tiles of same image have same label
+        
+        # Aggregate: mean of probabilities per image, then argmax
+        y_true = []
+        y_pred = []
+        for case_id in sorted(grouped_probs.keys()):
+            probs_arr = np.array(grouped_probs[case_id])
+            avg_prob = np.mean(probs_arr, axis=0)
+            pred = int(np.argmax(avg_prob))
+            y_pred.append(pred)
+            y_true.append(grouped_labels[case_id])
+        
+        y_true = np.array(y_true)
+        y_pred = np.array(y_pred)
+    else:
+        # No aggregation (single tile per image or disabled)
+        y_true = np.array(all_labels)
+        y_pred = np.array(all_preds)
+    
     epoch_f1 = f1_score(y_true, y_pred, average="macro")
 
     return epoch_loss, epoch_f1, y_true, y_pred
@@ -262,6 +347,16 @@ def train_model(
 
     best_val_f1 = 0.0
     best_state_dict = None
+    
+    # Early stopping setup
+    early_stopping = getattr(cfg, 'early_stopping', False)
+    es_patience = getattr(cfg, 'early_stopping_patience', 5)
+    es_min_delta = getattr(cfg, 'early_stopping_min_delta', 0.001)
+    es_counter = 0  # Epochs without improvement
+    es_best_f1 = 0.0
+    
+    if early_stopping:
+        print(f"✓ Early stopping enabled (patience={es_patience}, min_delta={es_min_delta})")
 
     history = {
         "train_loss": [],
@@ -319,10 +414,26 @@ def train_model(
             best_val_f1 = val_f1
             best_state_dict = model.state_dict().copy()
             print(f"  >> New best model! val_f1 improved to {best_val_f1:.4f}")
+        
+        # Early stopping check
+        if early_stopping:
+            if val_f1 > es_best_f1 + es_min_delta:
+                es_best_f1 = val_f1
+                es_counter = 0
+            else:
+                es_counter += 1
+                print(f"  >> Early stopping: {es_counter}/{es_patience} (no improvement)")
+                
+            if es_counter >= es_patience:
+                print(f"\n⚠ Early stopping triggered at epoch {epoch}!")
+                print(f"  No improvement for {es_patience} consecutive epochs.")
+                break
 
     print("\n==============================================================")
     print(f"Training finished for experiment: {exp_name}")
     print(f"Best validation F1 (macro): {best_val_f1:.4f}")
+    if early_stopping and es_counter >= es_patience:
+        print(f"Stopped early at epoch {epoch}/{cfg.epochs}")
     print("==============================================================")
 
     return best_state_dict, history
