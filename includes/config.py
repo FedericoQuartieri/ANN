@@ -2425,6 +2425,85 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "val_size": [0.2],
     },
 
+
+    "RUN1B_convnext_k4_roi30_augSoft_rescue": {
+        # ===== Dataset (uses output of preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+
+        # ===== Preprocessing config
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+
+        "pp_augmentation_enabled": [True],
+
+        # ===== OFFLINE AUG: più “soft” (meno distruttiva)
+        "pp_num_aug_copies": [1],
+        "pp_strong_rotation_degrees": [10],
+        "pp_strong_zoom_min": [0.90],
+        "pp_strong_zoom_max": [1.10],
+        "pp_strong_brightness": [0.10],
+        "pp_strong_contrast": [0.10],
+        "pp_strong_saturation": [0.10],
+        "pp_strong_hue": [0.02],
+        "pp_strong_random_erasing_p": [0.03],   # << abbassato tanto
+
+        # Smart discard / tiles
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],
+
+        # ROI
+        "use_roi_crop": [True],
+        "roi_padding": [30],
+
+        # Workers
+        "num_workers": [4],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+        "execute": [True],
+
+        # ===== Model / training
+        "backbone": ["convnext_tiny"],
+        "img_size": [384],
+        "batch_size": [16],
+
+        # LR più prudente (ConvNeXt spesso gradisce finetune più “calmo” su task piccoli)
+        "lr": [1e-4],
+        "weight_decay": [5e-4],
+
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        # ===== Regularization (ridotta)
+        "dropout_rate": [0.10],        # << da 0.30 a 0.10
+        "label_smoothing": [0.00],     # << tolta per vedere se stava ammazzando il segnale
+
+        # Early stopping
+        "early_stopping": [True],
+        "early_stopping_patience": [8],
+        "early_stopping_min_delta": [0.001],
+
+        # Validation
+        "cv_type": ["kfold"],
+        "n_splits": [4],
+        "val_size": [0.2],
+    },
+
+
 }
 
 
