@@ -318,6 +318,10 @@ class DoctogresDataset(Dataset):
         row = self.df.iloc[idx]
         img_name = row["sample_index"]
         label = int(row["label_idx"])
+        
+        # Extract original image ID (case_id) for aggregation
+        # e.g. "img_0002_k6_aug0.png" -> "img_0002"
+        case_id, _, _ = _parse_ids(img_name)
 
         img_path = os.path.join(self.img_dir, img_name)
         img = Image.open(img_path).convert("RGB")
@@ -328,7 +332,7 @@ class DoctogresDataset(Dataset):
         if self.transform is not None:
             img = self.transform(img)
 
-        return img, label
+        return img, label, case_id
 
 
 class DoctogresTestDataset(Dataset):
@@ -435,17 +439,37 @@ def get_transforms(cfg: TrainingConfig):
     """Return train and validation transforms.
 
     Heavy augmentation is now handled offline in preprocessing.
-    Here we only resize + center-crop + normalize.
+    
+    If ROI crop is enabled (use_roi_crop=True or mask_mode="crop_bbox"),
+    we do direct Resize to img_size (no CenterCrop) to avoid cutting
+    useful tissue at the borders.
+    
+    If ROI crop is disabled, we keep Resize + CenterCrop for consistency
+    with ImageNet-style preprocessing.
     """
     imagenet_mean = [0.485, 0.456, 0.406]
     imagenet_std = [0.229, 0.224, 0.225]
 
-    base_transform = transforms.Compose([
-        transforms.Resize(cfg.img_size + 32),
-        transforms.CenterCrop(cfg.img_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=imagenet_mean, std=imagenet_std),
-    ])
+    # Check if ROI crop is active
+    use_roi_crop = getattr(cfg, 'use_roi_crop', False)
+    mask_mode = getattr(cfg, 'mask_mode', 'multiply')
+    roi_active = use_roi_crop or mask_mode == 'crop_bbox'
+
+    if roi_active:
+        # ROI crop is already done in Dataset -> direct resize, no CenterCrop
+        base_transform = transforms.Compose([
+            transforms.Resize((cfg.img_size, cfg.img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=imagenet_mean, std=imagenet_std),
+        ])
+    else:
+        # No ROI crop -> use Resize + CenterCrop (ImageNet style)
+        base_transform = transforms.Compose([
+            transforms.Resize(cfg.img_size + 32),
+            transforms.CenterCrop(cfg.img_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=imagenet_mean, std=imagenet_std),
+        ])
 
     train_transform = base_transform
     val_transform = base_transform

@@ -1,13 +1,14 @@
 # includes/inference_utils.py
 
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 
 import cv2
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from .config import TrainingConfig
@@ -254,3 +255,180 @@ def _aggregate_tiles_by_mask_weight(
     print(f"[Tile Aggregation] Output contains {len(result_df)} original test images")
     
     return result_df
+
+
+# =============================================================================
+# ENSEMBLE INFERENCE (K-Fold model averaging)
+# =============================================================================
+
+def run_ensemble_inference_and_save(
+    cfg: TrainingConfig,
+    fold_state_dicts: List[Dict],
+    build_model_fn,  # function: (cfg, num_classes, device) -> nn.Module
+    num_classes: int,
+    test_loader: DataLoader,
+    idx_to_label: Dict[int, str],
+    device: torch.device,
+    output_csv: str | None = None,
+    aggregate_tiles: bool = True,
+) -> str:
+    """Run ensemble inference using multiple fold models and save submission.
+    
+    This function:
+    1. Loads each fold's model weights
+    2. For each sample, computes softmax probabilities from each model
+    3. Averages the probabilities across all models
+    4. Takes argmax to get final prediction
+    5. Optionally aggregates tile predictions per original image
+    
+    Args:
+        cfg: Training configuration
+        fold_state_dicts: List of state_dict from each fold
+        build_model_fn: Function to build model architecture
+        num_classes: Number of classes
+        test_loader: DataLoader for test images
+        idx_to_label: Mapping from class index to label string
+        device: torch device
+        output_csv: Output filename (optional)
+        aggregate_tiles: Whether to aggregate tile predictions
+        
+    Returns:
+        Path to saved submission CSV
+    """
+    n_folds = len(fold_state_dicts)
+    print(f"\n[Ensemble Inference] Using {n_folds} fold models")
+    
+    # Build models and load weights
+    models = []
+    for i, state_dict in enumerate(fold_state_dicts):
+        model = build_model_fn(cfg, num_classes=num_classes, device=device)
+        model.load_state_dict(state_dict)
+        model.eval()
+        models.append(model)
+        print(f"  Loaded fold {i+1}/{n_folds}")
+    
+    all_names: List[str] = []
+    all_preds: List[int] = []
+    all_probs: List[np.ndarray] = []  # For debugging/analysis
+    
+    with torch.no_grad():
+        for images, names in test_loader:
+            images = images.to(device)
+            batch_size = images.size(0)
+            
+            # Accumulate softmax probabilities from all models
+            avg_probs = torch.zeros(batch_size, num_classes, device=device)
+            
+            for model in models:
+                outputs = model(images)
+                probs = F.softmax(outputs, dim=1)
+                avg_probs += probs
+            
+            # Average probabilities
+            avg_probs /= n_folds
+            
+            # Get predictions from averaged probabilities
+            _, preds = torch.max(avg_probs, dim=1)
+            
+            all_names.extend(list(names))
+            all_preds.extend(preds.cpu().numpy().tolist())
+            all_probs.extend(avg_probs.cpu().numpy().tolist())
+    
+    # Clean up models
+    for model in models:
+        del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    labels = [idx_to_label[i] for i in all_preds]
+    
+    # Create initial dataframe with all predictions
+    raw_df = pd.DataFrame({
+        "sample_index": all_names,
+        "label": labels
+    })
+    
+    # Aggregate tiles if requested
+    if aggregate_tiles:
+        submission_df = _aggregate_tiles_by_mask_weight(raw_df, cfg)
+    else:
+        submission_df = raw_df.sort_values("sample_index")
+    
+    # ---------- decide filename ----------
+    if output_csv is None:
+        exp_name = getattr(cfg, "exp_name", "experiment")
+        safe_name = str(exp_name).replace(" ", "_")
+        filename = f"submission_ensemble_{safe_name}.csv"
+    else:
+        filename = output_csv
+    
+    save_dir = _get_out_root(cfg)
+    os.makedirs(save_dir, exist_ok=True)
+    out_path = os.path.join(save_dir, filename)
+    
+    submission_df.to_csv(out_path, index=False)
+    print(f"[Ensemble Inference] Saved ensemble submission to: {out_path}")
+    
+    # ---------- auto download if on Colab ----------
+    try:
+        from google.colab import files  # type: ignore
+        files.download(out_path)
+        print("Triggered Colab download for:", out_path)
+    except Exception:
+        pass
+    
+    return out_path
+
+
+def _aggregate_tiles_by_probs(
+    tile_probs: Dict[str, List[np.ndarray]],
+    tile_weights: Dict[str, List[float]],
+    idx_to_label: Dict[int, str],
+) -> pd.DataFrame:
+    """Aggregate tile probabilities to original images using weighted averaging.
+    
+    For each original image:
+    1. Collect all tile probability vectors
+    2. Weight each by mask size
+    3. Weighted average of probabilities
+    4. Argmax for final prediction
+    
+    Args:
+        tile_probs: Dict mapping original_name -> list of probability vectors
+        tile_weights: Dict mapping original_name -> list of mask weights
+        idx_to_label: Mapping from class index to label
+        
+    Returns:
+        DataFrame with [sample_index, label] for original images
+    """
+    final_predictions = []
+    
+    for original_name in sorted(tile_probs.keys()):
+        probs_list = tile_probs[original_name]
+        weights_list = tile_weights[original_name]
+        
+        # Stack and weight
+        probs_array = np.array(probs_list)  # shape: (n_tiles, n_classes)
+        weights_array = np.array(weights_list)  # shape: (n_tiles,)
+        
+        # Normalize weights
+        total_weight = weights_array.sum()
+        if total_weight > 0:
+            weights_array = weights_array / total_weight
+        else:
+            # Equal weights if no mask info
+            weights_array = np.ones(len(weights_list)) / len(weights_list)
+        
+        # Weighted average of probabilities
+        avg_probs = np.average(probs_array, axis=0, weights=weights_array)
+        
+        # Argmax for prediction
+        pred_idx = int(np.argmax(avg_probs))
+        final_label = idx_to_label[pred_idx]
+        
+        final_predictions.append({
+            'sample_index': original_name,
+            'label': final_label
+        })
+    
+    return pd.DataFrame(final_predictions).sort_values('sample_index')
