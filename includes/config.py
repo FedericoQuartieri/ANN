@@ -1367,7 +1367,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "backbone": ["resnet50"],
         "img_size": [424],
         "batch_size": [16, 8],
-        "lr": [1e-4, 3e-4],
+        "lr": [1e-4],
         "weight_decay": [1e-4],
         "epochs": [50],
         "use_scheduler": [True],
@@ -1377,7 +1377,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
         # ===== Validation
         "cv_type": ["kfold"],
-        "n_splits": [5],
+        "n_splits": [4],
         "val_size": [0.2],
     },
 
@@ -1446,7 +1446,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "backbone": ["resnet50"],
         "img_size": [424],
         "batch_size": [16],
-        "lr": [1e-4, 3e-4],
+        "lr": [1e-4],
         "weight_decay": [1e-3, 5e-3],
         "epochs": [50],
         "use_scheduler": [True],
@@ -1454,7 +1454,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
         # ===== Validation
         "cv_type": ["kfold"],
-        "n_splits": [5],
+        "n_splits": [4],
         "val_size": [0.2],
     },
 
@@ -1531,7 +1531,17 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "backbone": ["resnet50"],
         "img_size": [424],
         "batch_size": [16],
-        "lr": [1e-4, 3e-4],
+        "lr": [1e-4],
+        "weight_decay": [1e-3, 5e-3],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        # ===== Validation
+        "cv_type": ["kfold"],
+        "n_splits": [4],
+        "val_size": [0.2]
+    },
 
 
     "resnet50_oldaug_3copies_424_wd_grid": {
@@ -1603,7 +1613,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "backbone": ["resnet50"],
         "img_size": [424],
         "batch_size": [16],
-        "lr": [1e-4, 3e-4],
+        "lr": [1e-4],
         "weight_decay": [1e-3, 5e-3],
         "epochs": [50],
         "use_scheduler": [True],
@@ -1611,20 +1621,9 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
         # ===== Validation
         "cv_type": ["kfold"],
-        "n_splits": [5],
+        "n_splits": [4],
         "val_size": [0.2],
     },
-        "weight_decay": [1e-3, 5e-3],
-        "epochs": [50],
-        "use_scheduler": [True],
-        "use_amp": [True],
-
-        # ===== Validation
-        "cv_type": ["kfold"],
-        "n_splits": [5],
-        "val_size": [0.2],
-    },
-
 
 
 
@@ -1697,7 +1696,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "backbone": ["resnet50"],
         "img_size": [424],
         "batch_size": [16],
-        "lr": [1e-4, 3e-4],
+        "lr": [1e-4],
         "weight_decay": [1e-3, 5e-3],
         "epochs": [50],
         "use_scheduler": [True],
@@ -1705,7 +1704,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
         # ===== Validation
         "cv_type": ["kfold"],
-        "n_splits": [5],
+        "n_splits": [4],
         "val_size": [0.2],
     },
 
