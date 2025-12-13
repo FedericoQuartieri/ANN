@@ -1637,7 +1637,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
-    
+    # F1 validation
+    # F1 test: 0.3661
     "testing_with_persistent_numcopies1_batch32": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -2062,7 +2063,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "val_size": [0.2],
     },
 
-    
+    # F1 val: 0.44
     # F1 test: 0.3605
     "resnet50_strongaug_384_roi20": {
         # ===== Dataset (uses output of preprocessing.py)
