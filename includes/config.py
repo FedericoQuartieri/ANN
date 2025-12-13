@@ -157,8 +157,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "use_amp": [True],  # Mixed-precision training (float16)
 
         # ===== Validation
-        "cv_type": ["holdout"],
-        "n_splits": [5],
+        "cv_type": ["kfold"],
+        "n_splits": [2],
         "val_size": [0.2],
     },
 
