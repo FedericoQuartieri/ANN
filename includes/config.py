@@ -2081,7 +2081,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
 
 
-    "RUN1_convnext_k4_roi20_augM_grid": {
+    "RUN1_convnext_k4_roi30_augM_grid": {
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
@@ -2149,7 +2149,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
 
 
-    "RUN2_convnext_k4_roi20_augS_grid": {
+    "RUN2_convnext_k4_roi30_augS_grid": {
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
@@ -2216,7 +2216,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
-    "RUN3_effb3_k4_roi20_augM_grid": {
+    "RUN3_effb3_k4_roi30_augM_grid": {
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
@@ -2286,7 +2286,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
 
 
-    "RUN4_resnet50_k4_roi20_anchor_grid": {
+    "RUN4_resnet50_k4_roi30_anchor_grid": {
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
