@@ -1801,7 +1801,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     ## added early stopping
     ## added fold ensamble
 
-
+    # val F1: 0.3712
+    # Test F1: 0.3340
     "resnet50_strongaug_384": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -1977,7 +1978,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "val_size": [0.2],
     },
 
-
+    # F1 validation: 
+    # F1 test: 0.3420
     "resnet50_strongaug_384_roi10": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
