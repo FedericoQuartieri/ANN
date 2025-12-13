@@ -1642,9 +1642,99 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     ## added droput and label smoothing
     ## added early stopping
     ## added fold ensamble
-    ## modified how validation worksi
+
 
     "resnet50_strongaug_384": {
+        # ===== Dataset (uses output of preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
+
+
+
+        # ===== Preprocessing config (one value per key)
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+
+
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
+        "pp_num_aug_copies": [4],
+        "pp_strong_rotation_degrees": [45],
+        "pp_strong_zoom_min": [1.0],
+        "pp_strong_zoom_max": [1.5],
+        "pp_strong_brightness": [0.2],
+        "pp_strong_contrast": [0.2],
+        "pp_strong_saturation": [0.2],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.1],
+
+        # Smart discard / masks
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
+
+        # =======================
+
+        # ROI strategy
+        "use_roi_crop": [True],
+        "roi_padding": [10],
+
+
+        # Workers config
+        "num_workers": [2],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+
+        # Execute preprocessing
+        "execute": [True],
+
+        # ===== Model / training hyperparams
+        "backbone": ["resnet50"],
+        "img_size": [384],
+        "batch_size": [16],
+        "lr": [1e-4],
+        "weight_decay": [1e-3],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_masks": [True],
+
+            
+        # Extra Regularization (Non presenti nello stile originale, ma necessari qui)
+        "dropout_rate": [0.4],
+        "label_smoothing": [0.1],
+
+        # Early Stopping
+        "early_stopping": [True],   # Enable early stopping
+        "early_stopping_patience": [5],  # Stop after N epochs without improvement
+        "early_stopping_min_delta": [0.001],  # Minimum improvement to reset patience
+
+        # ===== Validation
+        "cv_type": ["kfold"],
+        "n_splits": [4],
+        "val_size": [0.2],
+    },
+
+
+    ## -----  NEW VALIDATION -----
+
+    # F1 validation: 0.4002
+    # test F1: 0.3865
+    "resnet50_strongaug_384_new": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
@@ -1815,7 +1905,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "val_size": [0.2],
     },
 
-
+    
+    # F1 test: 0.3605
     "resnet50_strongaug_384_roi20": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
