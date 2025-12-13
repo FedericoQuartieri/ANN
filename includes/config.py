@@ -2080,12 +2080,18 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     # ------ new net ----------
 
 
-
-    "RUN1_convnext_k4_roi30_augM_grid": {
+"RUN1_convnext_k4_roi30_augM_grid": {
+        # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
 
+
+
+        # ===== Preprocessing config (one value per key)
         "pp_remove_shrek": [True],
         "pp_fix_stained": [True],
         "pp_split_doubles": [True],
@@ -2095,10 +2101,12 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_crop_padding": [10],
         "pp_target_size": [384],
 
-        "pp_augmentation_enabled": [True],
-        "pp_num_aug_copies": [1],
 
-        # Aug moderata (stabile)
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
+        "pp_num_aug_copies": [1],
         "pp_strong_rotation_degrees": [15],
         "pp_strong_zoom_min": [0.85],
         "pp_strong_zoom_max": [1.10],
@@ -2108,52 +2116,68 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_strong_hue": [0.03],
         "pp_strong_random_erasing_p": [0.08],
 
+        # Smart discard / masks
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [False],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
 
+        # =======================
+
+        # ROI strategy
         "use_roi_crop": [True],
         "roi_padding": [30],
 
+
+        # Workers config
         "num_workers": [4],
         "persistent_workers": [True],
         "pin_memory": [True],
         "prefetch_factor": [2],
 
+
+        # Execute preprocessing
         "execute": [True],
 
+        # ===== Model / training hyperparams
         "backbone": ["convnext_tiny"],
         "img_size": [384],
         "batch_size": [16],
-
-        # ---- GRID (2 combo) ----
         "lr": [2e-4, 3e-4],
         "weight_decay": [1e-3],
-
         "epochs": [50],
         "use_scheduler": [True],
         "use_amp": [True],
 
+            
+        # Extra Regularization (Non presenti nello stile originale, ma necessari qui)
         "dropout_rate": [0.3],
         "label_smoothing": [0.05],
 
-        "early_stopping": [True],
-        "early_stopping_patience": [8],
-        "early_stopping_min_delta": [0.001],
+        # Early Stopping
+        "early_stopping": [True],   # Enable early stopping
+        "early_stopping_patience": [8],  # Stop after N epochs without improvement
+        "early_stopping_min_delta": [0.001],  # Minimum improvement to reset patience
 
+        # ===== Validation
         "cv_type": ["kfold"],
         "n_splits": [4],
         "val_size": [0.2],
     },
 
 
-
     "RUN2_convnext_k4_roi30_augS_grid": {
+        # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
 
+
+
+        # ===== Preprocessing config (one value per key)
         "pp_remove_shrek": [True],
         "pp_fix_stained": [True],
         "pp_split_doubles": [True],
@@ -2163,10 +2187,12 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_crop_padding": [10],
         "pp_target_size": [384],
 
-        "pp_augmentation_enabled": [True],
-        "pp_num_aug_copies": [1],
 
-        # Aug strong ma non estrema
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
+        "pp_num_aug_copies": [1],
         "pp_strong_rotation_degrees": [25],
         "pp_strong_zoom_min": [0.80],
         "pp_strong_zoom_max": [1.20],
@@ -2176,40 +2202,50 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_strong_hue": [0.05],
         "pp_strong_random_erasing_p": [0.10],
 
+        # Smart discard / masks
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [False],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
 
+        # =======================
+
+        # ROI strategy
         "use_roi_crop": [True],
         "roi_padding": [30],
 
+
+        # Workers config
         "num_workers": [4],
         "persistent_workers": [True],
         "pin_memory": [True],
         "prefetch_factor": [2],
 
+
+        # Execute preprocessing
         "execute": [True],
 
+        # ===== Model / training hyperparams
         "backbone": ["convnext_tiny"],
         "img_size": [384],
         "batch_size": [16],
-
-        # ---- GRID (2 combo) ----
         "lr": [3e-4],
         "weight_decay": [5e-4, 1e-3],
-
         "epochs": [50],
         "use_scheduler": [True],
         "use_amp": [True],
 
+            
+        # Extra Regularization (Non presenti nello stile originale, ma necessari qui)
         "dropout_rate": [0.3],
         "label_smoothing": [0.05],
 
-        "early_stopping": [True],
-        "early_stopping_patience": [8],
-        "early_stopping_min_delta": [0.001],
+        # Early Stopping
+        "early_stopping": [True],   # Enable early stopping
+        "early_stopping_patience": [8],  # Stop after N epochs without improvement
+        "early_stopping_min_delta": [0.001],  # Minimum improvement to reset patience
 
+        # ===== Validation
         "cv_type": ["kfold"],
         "n_splits": [4],
         "val_size": [0.2],
@@ -2217,10 +2253,17 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
 
     "RUN3_effb3_k4_roi30_augM_grid": {
+        # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
 
+
+
+        # ===== Preprocessing config (one value per key)
         "pp_remove_shrek": [True],
         "pp_fix_stained": [True],
         "pp_split_doubles": [True],
@@ -2230,10 +2273,12 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_crop_padding": [10],
         "pp_target_size": [384],
 
-        "pp_augmentation_enabled": [True],
-        "pp_num_aug_copies": [1],
 
-        # stessa aug moderata del RUN1
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
+        "pp_num_aug_copies": [1],
         "pp_strong_rotation_degrees": [15],
         "pp_strong_zoom_min": [0.85],
         "pp_strong_zoom_max": [1.10],
@@ -2243,54 +2288,68 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_strong_hue": [0.03],
         "pp_strong_random_erasing_p": [0.08],
 
+        # Smart discard / masks
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [False],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
 
+        # =======================
+
+        # ROI strategy
         "use_roi_crop": [True],
         "roi_padding": [30],
 
+
+        # Workers config
         "num_workers": [4],
         "persistent_workers": [True],
         "pin_memory": [True],
         "prefetch_factor": [2],
 
+
+        # Execute preprocessing
         "execute": [True],
 
+        # ===== Model / training hyperparams
         "backbone": ["efficientnet_b3"],
         "img_size": [384],
         "batch_size": [16],
-
-        # ---- GRID (2 combo) ----
         "lr": [1e-4, 2e-4],
         "weight_decay": [1e-3],
-
         "epochs": [50],
         "use_scheduler": [True],
         "use_amp": [True],
 
+            
+        # Extra Regularization (Non presenti nello stile originale, ma necessari qui)
         "dropout_rate": [0.3],
         "label_smoothing": [0.05],
 
-        "early_stopping": [True],
-        "early_stopping_patience": [8],
-        "early_stopping_min_delta": [0.001],
+        # Early Stopping
+        "early_stopping": [True],   # Enable early stopping
+        "early_stopping_patience": [8],  # Stop after N epochs without improvement
+        "early_stopping_min_delta": [0.001],  # Minimum improvement to reset patience
 
+        # ===== Validation
         "cv_type": ["kfold"],
         "n_splits": [4],
         "val_size": [0.2],
     },
 
 
-
-
-
     "RUN4_resnet50_k4_roi30_anchor_grid": {
+        # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
         "test_img_dir": ["pp_test_data"],
         "labels_csv": ["pp_train_labels.csv"],
+        # ingnored with pp_*
+        "use_masks": [True], 
+        "mask_mode": ["crop_bbox"],
 
+
+
+        # ===== Preprocessing config (one value per key)
         "pp_remove_shrek": [True],
         "pp_fix_stained": [True],
         "pp_split_doubles": [True],
@@ -2300,9 +2359,12 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_crop_padding": [10],
         "pp_target_size": [384],
 
-        "pp_augmentation_enabled": [True],
-        "pp_num_aug_copies": [1],
 
+        "pp_augmentation_enabled": [True],
+
+        # =====AUGMENTATION =====
+        # Strong augment params (used only if pp_augmentation_enabled=True)
+        "pp_num_aug_copies": [1],
         "pp_strong_rotation_degrees": [15],
         "pp_strong_zoom_min": [0.85],
         "pp_strong_zoom_max": [1.10],
@@ -2312,44 +2374,54 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "pp_strong_hue": [0.03],
         "pp_strong_random_erasing_p": [0.08],
 
+        # Smart discard / masks
         "pp_smart_discard_threshold": [0.02],
         "pp_split_into_tiles": [True],
         "pp_remove_empty_masks": [True],
-        "pp_darken_outside_mask": [False],
+        "pp_darken_outside_mask": [False],  # keep False if use_roi_crop=True
 
+        # =======================
+
+        # ROI strategy
         "use_roi_crop": [True],
         "roi_padding": [30],
 
+
+        # Workers config
         "num_workers": [2],
         "persistent_workers": [True],
         "pin_memory": [True],
         "prefetch_factor": [2],
 
+
+        # Execute preprocessing
         "execute": [True],
 
+        # ===== Model / training hyperparams
         "backbone": ["resnet50"],
         "img_size": [384],
         "batch_size": [32],
-
-        # ---- GRID (2 combo) ----
         "lr": [1e-4],
         "weight_decay": [5e-4, 1e-3],
-
         "epochs": [50],
         "use_scheduler": [True],
         "use_amp": [True],
 
+            
+        # Extra Regularization (Non presenti nello stile originale, ma necessari qui)
+        # Nota: dropout_rate non c'era nel RUN4 originale, l'ho lasciato assente per rispetto dei parametri originali.
         "label_smoothing": [0.05],
 
-        "early_stopping": [True],
-        "early_stopping_patience": [8],
-        "early_stopping_min_delta": [0.001],
+        # Early Stopping
+        "early_stopping": [True],   # Enable early stopping
+        "early_stopping_patience": [8],  # Stop after N epochs without improvement
+        "early_stopping_min_delta": [0.001],  # Minimum improvement to reset patience
 
+        # ===== Validation
         "cv_type": ["kfold"],
         "n_splits": [4],
         "val_size": [0.2],
     },
-
 
 }
 
