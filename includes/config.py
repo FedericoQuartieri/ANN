@@ -24,8 +24,6 @@ PREPROCESSING_KEYS: List[str] = [
         "pp_strong_saturation",
         "pp_strong_hue",
         "pp_strong_random_erasing_p",
-        "use_roi_crop",
-        "roi_padding",
 ]
 
 @dataclass
@@ -1905,15 +1903,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
+    # ------ new net ----------
 
-    
-
-
-
-
-    # ----------------------------------------------------------------------
-    # (usa pp_train_data / pp_test_data / pp_train_labels.csv)
-    # ----------------------------------------------------------------------
     "convnext_tiny_optimized1copies": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -2167,7 +2158,6 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "n_splits": [4],
         "val_size": [0.2],
     },
-
 
 
 
