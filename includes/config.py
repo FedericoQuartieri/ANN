@@ -2079,7 +2079,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
 
     # ------ new net ----------
 
-
+    # F1 val: 0.2250
     "RUN1_convnext_k4_roi30_augM_grid": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -2164,7 +2164,6 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "n_splits": [4],
         "val_size": [0.2],
     },
-
 
 
 
@@ -2254,6 +2253,9 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
+    # F1 k1: 0.4116 (lr: 1e-4)
+    # F1 k2: 0.3907
+    # F1 test: 0.3702
     "RUN3_effb3_k4_roi30_augM_grid": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -2340,6 +2342,9 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
+    # F1 k1: 0.3907
+    # F1 k2: 0.4029 (wd: 1e-3)
+    # F1 test: 0.35
     "RUN4_resnet50_k4_roi30_anchor_grid": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
