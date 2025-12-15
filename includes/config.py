@@ -2080,6 +2080,7 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     # ------ new net ----------
 
     # F1 val: 0.2250
+    # F1 test: no data
     "RUN1_convnext_k4_roi30_augM_grid": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -2166,7 +2167,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     },
 
 
-
+    # F1 validaion: 0.4111
+    # F1 test: no data
     "RUN2_convnext_k4_roi30_augS_grid": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -2430,7 +2432,8 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "val_size": [0.2],
     },
 
-
+    #Mean F1 over 4 folds: 0.3871
+    # F1 testing: 0.3567
     "RUN1B_convnext_k4_roi30_augSoft_rescue": {
         # ===== Dataset (uses output of preprocessing.py)
         "train_img_dir": ["pp_train_data"],
@@ -2506,6 +2509,153 @@ GRID_SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
         "cv_type": ["kfold"],
         "n_splits": [4],
         "val_size": [0.2],
+    },
+
+
+    "RUN5_convnext_k4_roi30_augMid_nogrid": {
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+
+        "pp_augmentation_enabled": [True],
+        "pp_num_aug_copies": [1],
+
+        # Mid between RUN1 (too weak) and RUN2 (strong)
+        "pp_strong_rotation_degrees": [20],
+        "pp_strong_zoom_min": [0.85],
+        "pp_strong_zoom_max": [1.15],
+        "pp_strong_brightness": [0.18],
+        "pp_strong_contrast": [0.18],
+        "pp_strong_saturation": [0.18],
+        "pp_strong_hue": [0.04],
+        "pp_strong_random_erasing_p": [0.06],  # reduced vs 0.10
+
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],
+
+        "use_roi_crop": [True],
+        "roi_padding": [30],
+
+        "num_workers": [4],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+        "execute": [True],
+
+        "backbone": ["convnext_tiny"],
+        "img_size": [384],
+        "batch_size": [16],
+
+        # Keep the "fast" LR that worked in RUN2, but lighten regularization
+        "lr": [3e-4],
+        "weight_decay": [5e-4],          # less than 1e-3
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        "dropout_rate": [0.15],          # less than 0.30
+        "label_smoothing": [0.02],       # small, not 0.05
+
+        "early_stopping": [True],
+        "early_stopping_patience": [8],
+        "early_stopping_min_delta": [0.001],
+
+        "cv_type": ["kfold"],
+        "n_splits": [4],
+        "val_size": [0.2],
+    },
+
+
+    "EFFB3_k2_roi30_augS_nogrid_push": {
+        # ===== Dataset (uses output of preprocessing.py)
+        "train_img_dir": ["pp_train_data"],
+        "test_img_dir": ["pp_test_data"],
+        "labels_csv": ["pp_train_labels.csv"],
+        "use_masks": [True],
+        "mask_mode": ["crop_bbox"],
+
+        # ===== Preprocessing config
+        "pp_remove_shrek": [True],
+        "pp_fix_stained": [True],
+        "pp_split_doubles": [True],
+        "pp_remove_black_rect": [True],
+        "pp_padding_square": [False],
+        "pp_crop_to_mask": [False],
+        "pp_crop_padding": [10],
+        "pp_target_size": [384],
+
+        # ===== OFFLINE AUG (enabled)
+        "pp_augmentation_enabled": [True],
+        "pp_num_aug_copies": [1],
+
+        # “AugS” (moderatamente strong, non distruttiva)
+        "pp_strong_rotation_degrees": [25],
+        "pp_strong_zoom_min": [0.80],
+        "pp_strong_zoom_max": [1.20],
+        "pp_strong_brightness": [0.20],
+        "pp_strong_contrast": [0.20],
+        "pp_strong_saturation": [0.20],
+        "pp_strong_hue": [0.05],
+        "pp_strong_random_erasing_p": [0.08],   # leggermente meno di 0.10
+
+        # Smart discard / tiles
+        "pp_smart_discard_threshold": [0.02],
+        "pp_split_into_tiles": [True],
+        "pp_remove_empty_masks": [True],
+        "pp_darken_outside_mask": [False],
+
+        # ROI strategy
+        "use_roi_crop": [True],
+        "roi_padding": [30],
+
+        # Workers config (una sola volta!)
+        "num_workers": [4],
+        "persistent_workers": [True],
+        "pin_memory": [True],
+        "prefetch_factor": [2],
+
+        # Execute preprocessing
+        "execute": [True],
+
+        # ===== Model / training hyperparams
+        "backbone": ["efficientnet_b3"],
+        "img_size": [384],
+        "batch_size": [16],
+
+        # LR “safe” per EffB3 su dataset piccoli
+        "lr": [1e-4],
+        "weight_decay": [1e-3],
+        "epochs": [50],
+        "use_scheduler": [True],
+        "use_amp": [True],
+
+        # Regularization (moderata)
+        "dropout_rate": [0.35],        # un filo più di 0.30
+        "label_smoothing": [0.05],
+
+        # Early stopping
+        "early_stopping": [True],
+        "early_stopping_patience": [8],
+        "early_stopping_min_delta": [0.001],
+
+        # ===== Validation
+        "cv_type": ["kfold"],
+        "n_splits": [2],
+        "val_size": [0.2],  # ignorata per kfold, ok lasciarla
     },
 
 
