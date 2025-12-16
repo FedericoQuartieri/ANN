@@ -62,15 +62,6 @@ jupyter notebook main.ipynb
 - Tile-to-image aggregation (softmax averaging)
 - Test-time augmentation optional
 
-## 📊 Results
-
-| Configuration | Val F1 | Test F1 |
-|--------------|--------|---------|
-| Baseline (no preprocessing) | 0.19 | - |
-| + Preprocessing | 0.32 | 0.29 |
-| + K-fold ensemble | 0.47 | 0.33 |
-| **Final (strong aug + ensemble)** | **0.72** | **0.39** |
-
 ## 🎨 Visualization
 
 Grad-CAM heatmaps available in `out/gradcam/` showing model attention on discriminative tissue features.
@@ -219,9 +210,11 @@ The notebooks will:
 - Train models with the configured hyperparameters
 - Generate predictions in `pirate_pain_test_predictions.csv`
 
+Project developed for AN2DL Challenge 1 (2025)
+
+---
 ---
 
-## Acknowledgements
 
 This work was developed as part of the **Advanced Neural Networks and Deep Learning (AN2DL)** course at Politecnico di Milano by the composed by:
 
@@ -230,4 +223,3 @@ This work was developed as part of the **Advanced Neural Networks and Deep Learn
 - Daniele Salvi  
 - Giacomo Tessera  
 
-The project is based on the official pirate pain dataset released for the course challenge.
