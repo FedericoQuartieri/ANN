@@ -127,7 +127,13 @@ def visualize_gradcam_for_validation(model, val_loader, idx_to_label, device,
     
     # Get a batch from validation
     val_iter = iter(val_loader)
-    images, labels = next(val_iter)
+    batch = next(val_iter)
+    
+    # Support both (img, label) and (img, label, case_id) formats
+    if len(batch) == 3:
+        images, labels, case_ids = batch
+    else:
+        images, labels = batch
     
     # ImageNet normalization stats for denormalization
     mean = np.array([0.485, 0.456, 0.406])
