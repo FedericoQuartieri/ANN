@@ -276,10 +276,9 @@ def run_ensemble_inference_and_save(
     
     This function:
     1. Loads each fold's model weights
-    2. For each sample, computes softmax probabilities from each model
-    3. Averages the probabilities across all models
-    4. Takes argmax to get final prediction
-    5. Optionally aggregates tile predictions per original image
+    2. For each sample, gets prediction from each model
+    3. Uses majority voting to determine final prediction
+    4. Optionally aggregates tile predictions per original image
     
     Args:
         cfg: Training configuration
@@ -309,30 +308,29 @@ def run_ensemble_inference_and_save(
     
     all_names: List[str] = []
     all_preds: List[int] = []
-    all_probs: List[np.ndarray] = []  # For debugging/analysis
     
     with torch.no_grad():
         for images, names in test_loader:
             images = images.to(device)
             batch_size = images.size(0)
             
-            # Accumulate softmax probabilities from all models
-            avg_probs = torch.zeros(batch_size, num_classes, device=device)
+            # Collect predictions from all models (voting)
+            fold_preds = []
             
             for model in models:
                 outputs = model(images)
-                probs = F.softmax(outputs, dim=1)
-                avg_probs += probs
+                _, preds = torch.max(outputs, dim=1)
+                fold_preds.append(preds.cpu().numpy())
             
-            # Average probabilities
-            avg_probs /= n_folds
+            # Majority voting: most common prediction across folds
+            fold_preds = np.array(fold_preds)  # shape: (n_folds, batch_size)
             
-            # Get predictions from averaged probabilities
-            _, preds = torch.max(avg_probs, dim=1)
+            # For each sample, take the most frequent prediction
+            from scipy import stats
+            ensemble_preds, _ = stats.mode(fold_preds, axis=0, keepdims=False)
             
             all_names.extend(list(names))
-            all_preds.extend(preds.cpu().numpy().tolist())
-            all_probs.extend(avg_probs.cpu().numpy().tolist())
+            all_preds.extend(ensemble_preds.tolist())
     
     # Clean up models
     for model in models:
